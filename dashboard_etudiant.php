@@ -9,6 +9,11 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'etudiant') {
 }
 $etudiant_id = $_SESSION['user_id'];
 
+// --- AUTO-MIGRATION : AJOUT COLONNE COEFFICIENT SI MANQUANTE ---
+try {
+    $pdo->exec("ALTER TABLE cours ADD COLUMN coefficient FLOAT DEFAULT 1.0 AFTER nom_cours");
+} catch (Exception $e) { /* Colonne probablement déjà présente */ }
+
 $msg_status = "";
 $active_tab_after_post = "dashboard"; 
 
@@ -106,39 +111,97 @@ try {
     $msg_status .= "<div class='alert danger'>⚠️ Erreur Absences : " . htmlspecialchars($e->getMessage()) . "</div>";
 }
 
-// 3. Emploi du temps (Date calée sur votre SEED : 2026-05-25)
-$date_test = '2026-05-25'; 
+// NAVIGATION DE L'EMPLOI DU TEMPS (Semaine)
+$offset_semaine = isset($_GET['semaine']) ? intval($_GET['semaine']) : 0;
+if (isset($_GET['semaine'])) { $active_tab_after_post = "edt"; }
+
+$lundi_courant = strtotime('monday this week');
+$timestamp_lundi = strtotime($offset_semaine . " weeks", $lundi_courant);
+$date_debut_semaine = date('Y-m-d', $timestamp_lundi);
+$date_fin_semaine = date('Y-m-d', strtotime('+6 days', $timestamp_lundi));
+
+// 3. Emploi du temps Hebdomadaire
 try {
-    $req_planning = $pdo->prepare("
-        SELECT s.id, s.heure_debut, s.heure_fin, s.salle, c.nom_cours, u.nom AS prof_nom
+    $stmtEdt = $pdo->prepare("
+        SELECT s.*, c.nom_cours, sl.nom_salle, u.nom AS prof_nom, u.prenom AS prof_prenom
         FROM sessions_cours s
-        INNER JOIN cours c ON s.cours_id = c.id
-        INNER JOIN inscriptions_cours ic ON c.id = ic.cours_id
-        INNER JOIN utilisateurs u ON s.enseignant_id = u.id
-        WHERE ic.etudiant_id = ? AND s.date_cours = ?
-        ORDER BY s.heure_debut ASC
+        JOIN cours c ON s.cours_id = c.id
+        JOIN salles sl ON s.salle_id = sl.id
+        JOIN utilisateurs u ON s.enseignant_id = u.id
+        JOIN inscriptions_cours ic ON c.id = ic.cours_id
+        WHERE ic.etudiant_id = ? AND s.date_cours BETWEEN ? AND ?
+        ORDER BY s.date_cours ASC, s.heure_debut ASC
     ");
-    $req_planning->execute([$etudiant_id, $date_test]);
-    $my_sessions = $req_planning->fetchAll();
+    $stmtEdt->execute([$etudiant_id, $date_debut_semaine, $date_fin_semaine]);
+    $sessions_semaine = $stmtEdt->fetchAll();
 } catch (Exception $e) {
     $msg_status .= "<div class='alert danger'>⚠️ Erreur Emploi du temps : " . htmlspecialchars($e->getMessage()) . "</div>";
+    $sessions_semaine = [];
 }
 
-// 4. Liste des notes et du Bulletin
+// 4. Liste des notes détaillée et moyennes
 try {
-    $req_notes = $pdo->prepare("
-        SELECT ue.code_ue, c.nom_cours, c.coefficient, n.valeur AS note, n.type_evaluation, n.statut_verrouillage
-        FROM inscriptions_cours ic
-        INNER JOIN cours c ON ic.cours_id = c.id
-        INNER JOIN unites_enseignement ue ON c.ue_id = ue.id
-        LEFT JOIN notes n ON (n.cours_id = c.id AND n.etudiant_id = ic.etudiant_id)
-        WHERE ic.etudiant_id = ?
-        ORDER BY ue.code_ue ASC
+    // On récupère d'abord les cours auxquels l'étudiant est inscrit
+    $stmtCourses = $pdo->prepare("
+        SELECT c.id, c.nom_cours, c.coefficient, ue.code_ue 
+        FROM inscriptions_cours ic 
+        JOIN cours c ON ic.cours_id = c.id 
+        JOIN unites_enseignement ue ON c.ue_id = ue.id 
+        WHERE ic.etudiant_id = ? 
+        ORDER BY ue.code_ue ASC, c.nom_cours ASC
     ");
-    $req_notes->execute([$etudiant_id]);
-    $bulletin = $req_notes->fetchAll();
+    $stmtCourses->execute([$etudiant_id]);
+    $my_courses = $stmtCourses->fetchAll();
+
+    $bulletin_detail = [];
+    foreach ($my_courses as $course) {
+        $course_id = $course['id'];
+        
+        // Notes CC
+        $stmtCC = $pdo->prepare("SELECT note_valeur, nom_examen FROM notes WHERE etudiant_id = ? AND cours_id = ? AND type_evaluation = 'CC'");
+        $stmtCC->execute([$etudiant_id, $course_id]);
+        $notes_cc = $stmtCC->fetchAll();
+        
+        // Notes Examen
+        $stmtEx = $pdo->prepare("SELECT note_valeur, nom_examen FROM notes WHERE etudiant_id = ? AND cours_id = ? AND type_evaluation = 'Examen'");
+        $stmtEx->execute([$etudiant_id, $course_id]);
+        $notes_ex = $stmtEx->fetchAll();
+        
+        // Calcul moyennes
+        $moy_cc = null;
+        if (count($notes_cc) > 0) {
+            $sum = 0; foreach($notes_cc as $n) $sum += $n['note_valeur'];
+            $moy_cc = $sum / count($notes_cc);
+        }
+        
+        $moy_ex = null;
+        if (count($notes_ex) > 0) {
+            $sum = 0; foreach($notes_ex as $n) $sum += $n['note_valeur'];
+            $moy_ex = $sum / count($notes_ex);
+        }
+        
+        $moy_gen = null;
+        if ($moy_cc !== null && $moy_ex !== null) {
+            $moy_gen = ($moy_cc * 0.4) + ($moy_ex * 0.6);
+        } elseif ($moy_cc !== null) {
+            $moy_gen = $moy_cc;
+        } elseif ($moy_ex !== null) {
+            $moy_gen = $moy_ex;
+        }
+        
+        $bulletin_detail[] = [
+            'code_ue' => $course['code_ue'],
+            'nom_cours' => $course['nom_cours'],
+            'coefficient' => $course['coefficient'],
+            'notes_cc' => $notes_cc,
+            'notes_ex' => $notes_ex,
+            'moy_cc' => $moy_cc,
+            'moy_ex' => $moy_ex,
+            'moy_gen' => $moy_gen
+        ];
+    }
 } catch (Exception $e) {
-    $msg_status .= "<div class='alert danger'>⚠️ Erreur Bulletin : " . htmlspecialchars($e->getMessage()) . "</div>";
+    $msg_status .= "<div class='alert danger'>⚠️ Erreur Notes : " . htmlspecialchars($e->getMessage()) . "</div>";
 }
 
 // 5. Liste des enseignants pour la messagerie
@@ -198,9 +261,9 @@ try {
 <div class="sidebar">
     <div class="sidebar-brand">Smart<span>Campus</span></div>
     <ul class="sidebar-menu">
-        <li><a href="#" id="btn-dashboard" class="active" onclick="switchTab('dashboard')"><i class="fa-solid fa-chart-pie"></i> Dashboard</a></li>
-        <li><a href="#" id="btn-notes" onclick="switchTab('notes')"><i class="fa-solid fa-graduation-cap"></i> Mes Notes</a></li>
-        <li><a href="#" id="btn-presence" onclick="switchTab('presence')"><i class="fa-solid fa-qrcode"></i> Présence QR Code</a></li>
+        <li><a href="#" id="btn-dashboard" class="active" onclick="switchTab('dashboard')"><i class="fa-solid fa-chart-line"></i> Vue d'ensemble</a></li>
+        <li><a href="#" id="btn-edt" onclick="switchTab('edt')"><i class="fa-solid fa-calendar-week"></i> Mon Emploi du Temps</a></li>
+        <li><a href="#" id="btn-notes" onclick="switchTab('notes')"><i class="fa-solid fa-graduation-cap"></i> Mes Notes & Résultats</a></li>
         <li><a href="#" id="btn-messagerie" onclick="switchTab('messagerie')"><i class="fa-solid fa-envelope"></i> Messagerie</a></li>
         <li><a href="deconnexion.php" style="color:#FEB2B2;"><i class="fa-solid fa-right-from-bracket"></i> Déconnexion</a></li>
     </ul>
@@ -210,7 +273,7 @@ try {
     
     <div class="card">
         <h2>Bienvenue, <?php echo htmlspecialchars($profil['prenom'] . ' ' . $profil['nom']); ?> 👋</h2>
-        <p><strong>Filière :</strong> <?php echo htmlspecialchars($profil['nom_promotion']); ?> | <strong>Statut :</strong> En formation <?php echo htmlspecialchars($profil['statut']); ?></p>
+        <p><i class="fa-solid fa-graduation-cap"></i> <strong>Filière :</strong> <?php echo htmlspecialchars($profil['nom_promotion']); ?> | <i class="fa-solid fa-user-check"></i> <strong>Statut :</strong> En formation <?php echo htmlspecialchars($profil['statut']); ?></p>
     </div>
 
     <?php echo $msg_status; ?>
@@ -228,8 +291,10 @@ try {
         </div>
         
         <div class="card" style="margin-top:25px;">
-            <h3><i class="fa-solid fa-calendar-day"></i> Mon Planning du Jour (<?php echo $date_test; ?>)</h3>
-            <?php if(empty($my_sessions)): ?>
+            <h3><i class="fa-solid fa-calendar-day"></i> Mes cours d'aujourd'hui (<?php echo date('d/m/Y'); ?>)</h3>
+            <?php 
+            $today_sessions = array_filter($sessions_semaine, function($s) { return $s['date_cours'] === date('Y-m-d'); });
+            if(empty($today_sessions)): ?>
                 <p>Aucun cours programmé aujourd'hui.</p>
             <?php else: ?>
                 <table>
@@ -237,62 +302,151 @@ try {
                         <tr><th>Horaire</th><th>Cours</th><th>Salle</th><th>Enseignant</th></tr>
                     </thead>
                     <tbody>
-                        <?php foreach($my_sessions as $s): ?>
+                        <?php foreach($today_sessions as $s): ?>
                             <tr>
                                 <td><strong><?php echo substr($s['heure_debut'],0,5); ?> - <?php echo substr($s['heure_fin'],0,5); ?></strong></td>
                                 <td><?php echo htmlspecialchars($s['nom_cours']); ?></td>
-                                <td>📍 <?php echo htmlspecialchars($s['salle']); ?></td>
-                                <td>M. <?php echo htmlspecialchars($s['prof_nom']); ?></td>
+                                <td>📍 <?php echo htmlspecialchars($s['nom_salle']); ?></td>
+                                <td>M. <?php echo htmlspecialchars($s['prof_nom'] . ' ' . $s['prof_prenom']); ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
             <?php endif; ?>
+        </div>
+    </div>
+
+    <div id="tab-edt" class="tab-content">
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+                <h3 style="margin:0;"><i class="fa-solid fa-calendar-week"></i> Mon Planning Hebdomadaire</h3>
+                
+                <select id="studentScheduleFilter" onchange="applyStudentFilter()" style="width: 250px; padding: 8px; border: 1px solid #CBD5E0; border-radius: 4px; margin:0; font-size:0.9em; background:white;">
+                    <option value="ALL">-- Tous mes cours --</option>
+                    <?php 
+                    $unique_subjects = array_unique(array_column($sessions_semaine, 'nom_cours'));
+                    asort($unique_subjects);
+                    foreach($unique_subjects as $fs): ?>
+                        <option value="SUBJECT_<?php echo htmlspecialchars($fs); ?>"><?php echo htmlspecialchars($fs); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; background: #EDF2F7; padding: 10px 20px; border-radius: 6px; margin-bottom: 20px;">
+                <a style="background: #0A2240; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-weight: bold;" href="?semaine=<?php echo $offset_semaine - 1; ?>"><i class="fa-solid fa-arrow-left"></i> Précédente</a>
+                <span>Semaine du <strong><?php echo date('d/m/Y', $timestamp_lundi); ?></strong> au <strong><?php echo date('d/m/Y', strtotime('+4 days', $timestamp_lundi)); ?></strong></span>
+                <a style="background: #0A2240; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-weight: bold;" href="?semaine=<?php echo $offset_semaine + 1; ?>">Suivante <i class="fa-solid fa-arrow-right"></i></a>
+            </div>
+
+            <style>
+                .weekly-grid { display: grid; grid-template-columns: 60px repeat(5, minmax(120px, 1fr)); border: 1px solid #E2E8F0; border-radius: 8px; overflow: hidden; background: white; }
+                .grid-header { background: #0A2240; color: white; padding: 12px 5px; text-align: center; font-weight: bold; font-size: 0.9em; border: 1px solid #1A365D; }
+                .time-slot { background: #EDF2F7; padding: 10px 5px; text-align: center; font-size: 0.85em; border: 1px solid #E2E8F0; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #0A2240; }
+                .day-slot { min-height: 100px; border: 1px solid #E2E8F0; padding: 8px; background: white; position: relative; }
+                .session-item { background: #EBF8FF; border-left: 4px solid #3182CE; margin-bottom: 8px; padding: 8px; font-size: 0.8em; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+                .session-time { font-weight: bold; color: #2B6CB0; display: block; margin-bottom: 3px; }
+                .session-item strong { color: #0A2240; display: block; margin-bottom: 2px; }
+            </style>
+
+            <div class="weekly-grid">
+                <div class="grid-header">Heures</div>
+                <?php 
+                $days_names = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'];
+                for($i=0; $i<5; $i++): 
+                    $date_day = date('d/m', strtotime("+$i days", $timestamp_lundi));
+                ?>
+                    <div class="grid-header"><?php echo $days_names[$i] . ' <br><small>' . $date_day . '</small>'; ?></div>
+                <?php endfor; ?>
+
+                <?php 
+                $slots = ["08:00", "10:00", "13:00", "15:00", "17:00"];
+                foreach($slots as $slot): 
+                    $slot_hour = intval(substr($slot, 0, 2));
+                ?>
+                    <div class="time-slot"><?php echo $slot; ?></div>
+                    <?php for($day_idx=0; $day_idx<5; $day_idx++): 
+                        $current_date = date('Y-m-d', strtotime("+$day_idx days", $timestamp_lundi));
+                    ?>
+                        <div class="day-slot">
+                            <?php foreach($sessions_semaine as $sess): 
+                                $hour = intval(substr($sess['heure_debut'], 0, 2));
+                                $is_in_slot = false;
+                                if ($slot_hour == 8 && $hour >= 8 && $hour < 10) $is_in_slot = true;
+                                elseif ($slot_hour == 10 && $hour >= 10 && $hour < 13) $is_in_slot = true;
+                                elseif ($slot_hour == 13 && $hour >= 13 && $hour < 15) $is_in_slot = true;
+                                elseif ($slot_hour == 15 && $hour >= 15 && $hour < 17) $is_in_slot = true;
+                                elseif ($slot_hour == 17 && $hour >= 17) $is_in_slot = true;
+
+                                if($sess['date_cours'] === $current_date && $is_in_slot): 
+                                ?>
+                                <div class="session-item" data-subject="SUBJECT_<?php echo htmlspecialchars($sess['nom_cours']); ?>">
+                                    <span class="session-time"><?php echo substr($sess['heure_debut'],0,5).' - '.substr($sess['heure_fin'],0,5); ?></span>
+                                    <strong><?php echo htmlspecialchars($sess['nom_cours']); ?></strong>
+                                    <small>📍 <?php echo htmlspecialchars($sess['nom_salle']); ?></small><br>
+                                    <small>M. <?php echo htmlspecialchars($sess['prof_nom']); ?></small>
+                                </div>
+                            <?php endif; endforeach; ?>
+                        </div>
+                    <?php endfor; ?>
+                <?php endforeach; ?>
+            </div>
         </div>
     </div>
 
     <div id="tab-notes" class="tab-content">
         <div class="card">
-            <h3><i class="fa-solid fa-id-card-clip"></i> Mes Notes et Résultats</h3>
-            <?php if(empty($bulletin)): ?>
-                <p>Aucune note enregistrée pour le moment.</p>
+            <h3><i class="fa-solid fa-graduation-cap"></i> Mes Notes & Résultats Détaillés</h3>
+            <?php if(empty($bulletin_detail)): ?>
+                <p>Aucun résultat disponible pour le moment.</p>
             <?php else: ?>
                 <table>
                     <thead>
-                        <tr><th>Code UE</th><th>Matière</th><th>Type Éval.</th><th>Coefficient</th><th>Note / 20</th><th>Statut</th></tr>
+                        <tr>
+                            <th>Matière</th>
+                            <th>Notes Détailées (Toutes)</th>
+                            <th style="text-align:center; background:#EDF2F7;">Moyenne CC</th>
+                            <th style="text-align:center; background:#EDF2F7;">Moyenne Examen</th>
+                            <th style="text-align:center; background:#0A2240; color:white;">Moyenne Générale</th>
+                        </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($bulletin as $b): ?>
+                        <?php foreach($bulletin_detail as $res): ?>
                             <tr>
-                                <td><strong><?php echo htmlspecialchars($b['code_ue']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($b['nom_cours']); ?></td>
-                                <td><?php echo htmlspecialchars($b['type_evaluation'] ?? '-'); ?></td>
-                                <td><?php echo htmlspecialchars($b['coefficient']); ?></td>
-                                <td><strong><?php echo $b['note'] !== null ? number_format($b['note'], 2) : 'Non saisie'; ?></strong></td>
-                                <td><?php echo $b['statut_verrouillage'] === 'valide_definitif' ? '🔴 Validée' : '🟡 En attente'; ?></td>
+                                <td>
+                                    <strong><?php echo htmlspecialchars($res['nom_cours']); ?></strong><br>
+                                    <small style="color:#718096;">UE: <?php echo htmlspecialchars($res['code_ue']); ?> | Coeff: <?php echo $res['coefficient']; ?></small>
+                                </td>
+                                <td>
+                                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                        <?php 
+                                        $all_n = array_merge($res['notes_cc'], $res['notes_ex']);
+                                        if (empty($all_n)): ?>
+                                            <span style="color:#A0AEC0; font-style:italic; font-size:0.85em;">Aucune note</span>
+                                        <?php else: 
+                                            foreach($all_n as $n): 
+                                                $color = $n['note_valeur'] < 10 ? '#D9383A' : '#2B6CB0';
+                                            ?>
+                                                <div style="background:#F7FAFC; border:1px solid #E2E8F0; padding:4px 8px; border-radius:4px; font-size:0.8em; min-width:60px; text-align:center;">
+                                                    <span style="font-weight:bold; color:<?php echo $color; ?>;"><?php echo number_format($n['note_valeur'], 2); ?></span>
+                                                    <br><small style="font-size:0.8em;"><?php echo htmlspecialchars($n['nom_examen'] ?? 'Note'); ?></small>
+                                                </div>
+                                            <?php endforeach; 
+                                        endif; ?>
+                                    </div>
+                                </td>
+                                <td style="text-align:center; font-weight:bold;">
+                                    <?php echo $res['moy_cc'] !== null ? number_format($res['moy_cc'], 2) : '-'; ?>
+                                </td>
+                                <td style="text-align:center; font-weight:bold;">
+                                    <?php echo $res['moy_ex'] !== null ? number_format($res['moy_ex'], 2) : '-'; ?>
+                                </td>
+                                <td style="text-align:center; font-weight:bold; background:#F8FAFC; color:#0A2240;">
+                                    <?php echo $res['moy_gen'] !== null ? number_format($res['moy_gen'], 2) : '-'; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
-            <?php endif; ?>
-        </div>
-    </div>
-
-    <div id="tab-presence" class="tab-content">
-        <div class="card" style="max-width:500px; margin:0 auto; text-align:center;">
-            <h3><i class="fa-solid fa-qrcode"></i> Émulation Scanner de QR Code</h3>
-            <p>Sélectionnez le cours actuel pour simuler le scan du QR code de l'amphithéâtre.</p>
-            <?php if(empty($my_sessions)): ?>
-                <p style="color:#718096;">Aucun cours planifié aujourd'hui pour valider une présence.</p>
-            <?php else: ?>
-                <form method="POST">
-                    <select name="session_valide_id" required>
-                        <?php foreach($my_sessions as $s): ?>
-                            <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['nom_cours']); ?> (<?php echo substr($s['heure_debut'],0,5); ?>)</option>
-                        <?php endforeach; ?>
-                    </select>
-                    <button type="submit" name="action_valider_presence">Flasher & Signer la présence</button>
-                </form>
             <?php endif; ?>
         </div>
     </div>
@@ -342,6 +496,24 @@ try {
     }
     window.onload = function() {
         switchTab("<?php echo $active_tab_after_post; ?>");
+    }
+
+    function applyStudentFilter() {
+        let filterVal = document.getElementById("studentScheduleFilter").value;
+        let items = document.querySelectorAll(".session-item");
+
+        items.forEach(item => {
+            if (filterVal === "ALL") {
+                item.style.display = "block";
+            } else {
+                let matchSubject = item.getAttribute("data-subject") === filterVal;
+                if (matchSubject) {
+                    item.style.display = "block";
+                } else {
+                    item.style.display = "none";
+                }
+            }
+        });
     }
 </script>
 </body>

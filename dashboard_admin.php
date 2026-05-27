@@ -8,46 +8,34 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] !== 'admin') {
     exit();
 }
 
+// --- AUTO-INITIALISATION DE LA STRUCTURE (AMPHIS / TD) ---
+// Si les tables sont vides, on crée 3 Amphis et 6 TDs par promotion.
+try {
+    $promos = $pdo->query("SELECT id FROM promotions")->fetchAll();
+    foreach ($promos as $p) {
+        $p_id = $p['id'];
+        $amphi_count = $pdo->query("SELECT COUNT(*) FROM amphis WHERE promotion_id = $p_id")->fetchColumn();
+        if ($amphi_count == 0) {
+            for ($i = 1; $i <= 3; $i++) {
+                $pdo->prepare("INSERT INTO amphis (nom, promotion_id) VALUES (?, ?)")->execute(["Amphi " . $i, $p_id]);
+                $amphi_id = $pdo->lastInsertId();
+                $start_td = ($i - 1) * 2 + 1;
+                for ($j = $start_td; $j <= $start_td + 1; $j++) {
+                    $pdo->prepare("INSERT INTO groupes_td (nom, amphi_id) VALUES (?, ?)")->execute(["TD" . $j, $amphi_id]);
+                }
+            }
+        }
+    }
+} catch (Exception $e) { /* Ignore setup errors to not break dashboard */ }
+// ---------------------------------------------------------
+
 $msg_status = "";
 $active_tab = "dashboard";
 
 // 2. TRAITEMENT DES SOUMISSIONS (POST)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // A. Planification de cours
-    if (isset($_POST['planifier_cours'])) {
-        $active_tab = "planification";
-        $cours_id = intval($_POST['cours_id']);
-        $enseignant_id = intval($_POST['enseignant_id']);
-        $salle = trim($_POST['salle']);
-        $date_cours = $_POST['date_cours'];
-        $heure_debut = $_POST['heure_debut'];
-        $heure_fin = $_POST['heure_fin'];
-
-        if (strtotime($heure_debut) >= strtotime($heure_fin)) {
-            $msg_status = "<div class='alert error'>❌ Erreur : L'heure de fin doit être après l'heure de début.</div>";
-        } else {
-            try {
-                // Détection des conflits (chevauchement)
-                $checkConflict = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours 
-                                                WHERE (enseignant_id = ? OR salle = ?) 
-                                                AND date_cours = ? 
-                                                AND heure_debut < ? AND heure_fin > ?");
-                $checkConflict->execute([$enseignant_id, $salle, $date_cours, $heure_fin, $heure_debut]);
-
-                if ($checkConflict->fetchColumn() > 0) {
-                    $msg_status = "<div class='alert error'>⚠️ Conflit : L'enseignant ou la salle est déjà occupé sur ce créneau.</div>";
-                } else {
-                    $ins = $pdo->prepare("INSERT INTO sessions_cours (cours_id, enseignant_id, salle, date_cours, heure_debut, heure_fin) VALUES (?, ?, ?, ?, ?, ?)");
-                    $ins->execute([$cours_id, $enseignant_id, $salle, $date_cours, $heure_debut, $heure_fin]);
-                    $msg_status = "<div class='alert success'>✅ Séance planifiée avec succès !</div>";
-                }
-            } catch (PDOException $e) {
-                $msg_status = "<div class='alert error'>Erreur SQL : " . $e->getMessage() . "</div>";
-            }
-        }
-    }
-
-    // B. Inscription d'un nouvel étudiant
+    
+    // A. Inscription d'un nouvel étudiant
     if (isset($_POST['inscrire_etudiant'])) {
         $active_tab = "inscription";
         $nom = trim($_POST['nom']);
@@ -55,41 +43,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $email = filter_var(trim($_POST['email']), FILTER_SANITIZE_EMAIL);
         $password = trim($_POST['password']);
         $promotion_id = intval($_POST['promotion_id']);
-        $groupe_td_id = !empty($_POST['groupe_td_id']) ? intval($_POST['groupe_td_id']) : null;
+        $groupe_td_id = intval($_POST['groupe_td_id']); // Obligatoire
         $statut_parcours = $_POST['statut_parcours'];
 
-        if (!empty($nom) && !empty($prenom) && !empty($email) && !empty($password)) {
+        if (!empty($nom) && !empty($prenom) && !empty($email) && !empty($password) && !empty($groupe_td_id)) {
             try {
-                // Vérifier si l'email existe déjà
+                // 1. Vérifier si l'email existe
                 $checkEmail = $pdo->prepare("SELECT COUNT(*) FROM utilisateurs WHERE email = ?");
                 $checkEmail->execute([$email]);
+                
+                // 2. Vérifier la capacité du TD (Max 25 places)
+                $checkCapacity = $pdo->prepare("SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = ?");
+                $checkCapacity->execute([$groupe_td_id]);
+                $current_td_count = $checkCapacity->fetchColumn();
+
                 if ($checkEmail->fetchColumn() > 0) {
-                    $msg_status = "<div class='alert error'>❌ Erreur : Cet email est déjà utilisé par un autre utilisateur.</div>";
+                    $msg_status = "<div class='alert error'>❌ Erreur : Cet email est déjà utilisé.</div>";
+                } elseif ($current_td_count >= 25) {
+                    $msg_status = "<div class='alert error'>❌ Erreur : Ce groupe de TD est complet (25/25 étudiants max).</div>";
                 } else {
                     $pdo->beginTransaction();
-
-                    // 1. Créer l'utilisateur
                     $stmtUser = $pdo->prepare("INSERT INTO utilisateurs (nom, prenom, email, mot_de_pass, role) VALUES (?, ?, ?, ?, 'etudiant')");
                     $stmtUser->execute([$nom, $prenom, $email, $password]);
                     $user_id = $pdo->lastInsertId();
-
-                    // 2. Lier à la table etudiants (Conformément au schéma SQL avec groupe_td_id)
                     $stmtEtudiant = $pdo->prepare("INSERT INTO etudiants (utilisateur_id, promotion_id, groupe_td_id, statut_parcours) VALUES (?, ?, ?, ?)");
                     $stmtEtudiant->execute([$user_id, $promotion_id, $groupe_td_id, $statut_parcours]);
-
                     $pdo->commit();
                     $msg_status = "<div class='alert success'>✅ Étudiant inscrit avec succès !</div>";
                 }
             } catch (PDOException $e) {
                 if ($pdo->inTransaction()) { $pdo->rollBack(); }
-                $msg_status = "<div class='alert error'>❌ Erreur lors de l'inscription : " . $e->getMessage() . "</div>";
+                $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
             }
         } else {
-            $msg_status = "<div class='alert error'>❌ Veuillez remplir tous les champs.</div>";
+            $msg_status = "<div class='alert error'>❌ Veuillez remplir tous les champs, y compris le groupe de TD.</div>";
         }
     }
 
-    // C. Modification d'un étudiant
+    // B. Modification d'un étudiant
     if (isset($_POST['modifier_etudiant'])) {
         $active_tab = "students";
         $id_user = intval($_POST['user_id']);
@@ -97,136 +88,306 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $prenom = trim($_POST['prenom']);
         $email = filter_var(trim($_POST['email']), FILTER_SANITIZE_EMAIL);
         $promotion_id = intval($_POST['promotion_id']);
-        $groupe_td_id = !empty($_POST['groupe_td_id']) ? intval($_POST['groupe_td_id']) : null;
+        $groupe_td_id = intval($_POST['groupe_td_id']); // Obligatoire
         $statut_parcours = $_POST['statut_parcours'];
 
-        if (!empty($nom) && !empty($prenom) && !empty($email)) {
+        if (!empty($nom) && !empty($prenom) && !empty($email) && !empty($groupe_td_id)) {
             try {
-                $pdo->beginTransaction();
+                // Vérifier la capacité du TD en excluant l'étudiant actuel
+                $checkCapacity = $pdo->prepare("SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = ? AND utilisateur_id != ?");
+                $checkCapacity->execute([$groupe_td_id, $id_user]);
+                $current_td_count = $checkCapacity->fetchColumn();
 
-                // 1. Mettre à jour l'utilisateur
-                $updUser = $pdo->prepare("UPDATE utilisateurs SET nom = ?, prenom = ?, email = ? WHERE id = ?");
-                $updUser->execute([$nom, $prenom, $email, $id_user]);
-
-                // 2. Mettre à jour les infos étudiantes
-                $updEtudiant = $pdo->prepare("UPDATE etudiants SET promotion_id = ?, groupe_td_id = ?, statut_parcours = ? WHERE utilisateur_id = ?");
-                $updEtudiant->execute([$promotion_id, $groupe_td_id, $statut_parcours, $id_user]);
-
-                $pdo->commit();
-                $msg_status = "<div class='alert success'>✅ Profil étudiant mis à jour avec succès !</div>";
+                if ($current_td_count >= 25) {
+                    $msg_status = "<div class='alert error'>❌ Erreur : Ce groupe de TD est complet (25/25 étudiants max).</div>";
+                } else {
+                    $pdo->beginTransaction();
+                    $pdo->prepare("UPDATE utilisateurs SET nom = ?, prenom = ?, email = ? WHERE id = ?")->execute([$nom, $prenom, $email, $id_user]);
+                    $pdo->prepare("UPDATE etudiants SET promotion_id = ?, groupe_td_id = ?, statut_parcours = ? WHERE utilisateur_id = ?")->execute([$promotion_id, $groupe_td_id, $statut_parcours, $id_user]);
+                    $pdo->commit();
+                    $msg_status = "<div class='alert success'>✅ Profil mis à jour !</div>";
+                }
             } catch (PDOException $e) {
                 if ($pdo->inTransaction()) { $pdo->rollBack(); }
-                $msg_status = "<div class='alert error'>❌ Erreur lors de la modification : " . $e->getMessage() . "</div>";
+                $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
             }
         }
     }
 
-    // D. Suppression d'un étudiant
+    // C. Suppression d'un étudiant
     if (isset($_POST['supprimer_etudiant'])) {
         $active_tab = "students";
         $id_user = intval($_POST['user_id']);
-
         try {
             $pdo->beginTransaction();
-
-            // 1. Supprimer les présences
             $pdo->prepare("DELETE FROM presences WHERE etudiant_id = ?")->execute([$id_user]);
-            // 2. Supprimer les notes
             $pdo->prepare("DELETE FROM notes WHERE etudiant_id = ?")->execute([$id_user]);
-            // 3. Supprimer les inscriptions aux cours
             $pdo->prepare("DELETE FROM inscriptions_cours WHERE etudiant_id = ?")->execute([$id_user]);
-            // 4. Supprimer l'entrée dans la table etudiants
             $pdo->prepare("DELETE FROM etudiants WHERE utilisateur_id = ?")->execute([$id_user]);
-            // 5. Supprimer l'utilisateur
             $pdo->prepare("DELETE FROM utilisateurs WHERE id = ?")->execute([$id_user]);
-
             $pdo->commit();
-            $msg_status = "<div class='alert success'>🗑️ Étudiant supprimé avec succès !</div>";
+            $msg_status = "<div class='alert success'>🗑️ Étudiant supprimé !</div>";
         } catch (PDOException $e) {
             if ($pdo->inTransaction()) { $pdo->rollBack(); }
-            $msg_status = "<div class='alert error'>❌ Erreur lors de la suppression : " . $e->getMessage() . "</div>";
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
 
-    // E. Inscription d'un nouvel enseignant
+    // D. Inscription Enseignant
     if (isset($_POST['inscrire_enseignant'])) {
         $active_tab = "inscription_prof";
         $nom = trim($_POST['nom']);
         $prenom = trim($_POST['prenom']);
         $email = filter_var(trim($_POST['email']), FILTER_SANITIZE_EMAIL);
         $password = trim($_POST['password']);
-        $specialite = trim($_POST['specialite']);
+        try {
+            $stmtUser = $pdo->prepare("INSERT INTO utilisateurs (nom, prenom, email, mot_de_pass, role) VALUES (?, ?, ?, ?, 'enseignant')");
+            $stmtUser->execute([$nom, $prenom, $email, $password]);
+            $msg_status = "<div class='alert success'>✅ Enseignant inscrit !</div>";
+        } catch (PDOException $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
+        }
+    }
 
-        if (!empty($nom) && !empty($prenom) && !empty($email) && !empty($password)) {
+    // E. Modification Enseignant
+    if (isset($_POST['modifier_enseignant'])) {
+        $active_tab = "teachers";
+        $id_user = intval($_POST['user_id']);
+        $nom = trim($_POST['nom']);
+        $prenom = trim($_POST['prenom']);
+        $email = filter_var(trim($_POST['email']), FILTER_SANITIZE_EMAIL);
+        try {
+            $pdo->prepare("UPDATE utilisateurs SET nom = ?, prenom = ?, email = ? WHERE id = ? AND role = 'enseignant'")->execute([$nom, $prenom, $email, $id_user]);
+            $msg_status = "<div class='alert success'>✅ Profil enseignant mis à jour !</div>";
+        } catch (PDOException $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
+        }
+    }
+
+    // F. Suppression Enseignant
+    if (isset($_POST['supprimer_enseignant'])) {
+        $active_tab = "teachers";
+        $id_user = intval($_POST['user_id']);
+        try {
+            $pdo->beginTransaction();
+            $pdo->prepare("DELETE FROM sessions_cours WHERE enseignant_id = ?")->execute([$id_user]);
+            $pdo->prepare("DELETE FROM notes WHERE enseignant_id = ?")->execute([$id_user]);
+            $pdo->prepare("DELETE FROM utilisateurs WHERE id = ? AND role = 'enseignant'")->execute([$id_user]);
+            $pdo->commit();
+            $msg_status = "<div class='alert success'>🗑️ Enseignant supprimé !</div>";
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
+        }
+    }
+
+    // G. Création de Cours (Correction : ajout de ue_id)
+    if (isset($_POST['creer_cours'])) {
+        $active_tab = "courses_schedule";
+        $nom_cours = trim($_POST['nom_cours']);
+        $ue_id = intval($_POST['ue_id']);
+        try {
+            $pdo->prepare("INSERT INTO cours (nom_cours, ue_id) VALUES (?, ?)")->execute([$nom_cours, $ue_id]);
+            $msg_status = "<div class='alert success'>✅ Cours créé avec succès !</div>";
+        } catch (PDOException $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
+        }
+    }
+
+    // H. Planification Session (Amélioration : Détection des conflits)
+    if (isset($_POST['planifier_session'])) {
+        $active_tab = "courses_schedule";
+        $cours_id = intval($_POST['cours_id']);
+        $enseignant_id = intval($_POST['enseignant_id']);
+        $salle_id = intval($_POST['salle_id']);
+        $cible = $_POST['cible_cours']; // Format : 'td_X' ou 'amphi_Y'
+        $date_cours = $_POST['date_cours'];
+        $heure_debut = $_POST['heure_debut'];
+        $heure_fin = $_POST['heure_fin'];
+
+        if (strtotime($heure_debut) >= strtotime($heure_fin)) {
+            $msg_status = "<div class='alert error'>❌ L'heure de fin doit être après l'heure de début.</div>";
+        } else {
             try {
-                // Vérifier si l'email existe déjà
-                $checkEmail = $pdo->prepare("SELECT COUNT(*) FROM utilisateurs WHERE email = ?");
-                $checkEmail->execute([$email]);
-                if ($checkEmail->fetchColumn() > 0) {
-                    $msg_status = "<div class='alert error'>❌ Erreur : Cet email est déjà utilisé.</div>";
+                // --- 1. DÉTECTION DES CONFLITS ---
+                $conflit_msg = "";
+                
+                // A. Conflit Enseignant
+                $checkProf = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE enseignant_id = ? AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
+                $checkProf->execute([$enseignant_id, $date_cours, $heure_fin, $heure_debut]);
+                if ($checkProf->fetchColumn() > 0) $conflit_msg .= "L'enseignant est déjà occupé. ";
+
+                // B. Conflit Salle
+                $checkSalle = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE salle_id = ? AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
+                $checkSalle->execute([$salle_id, $date_cours, $heure_fin, $heure_debut]);
+                if ($checkSalle->fetchColumn() > 0) $conflit_msg .= "La salle est déjà réservée. ";
+
+                // C. Conflit Classe (TD ou Amphi)
+                $tds_concernes = [];
+                if (strpos($cible, 'amphi_') === 0) {
+                    $amphi_id = intval(substr($cible, 6));
+                    $res = $pdo->query("SELECT id FROM groupes_td WHERE amphi_id = " . $amphi_id)->fetchAll();
+                    foreach($res as $r) $tds_concernes[] = $r['id'];
+                } else {
+                    $tds_concernes[] = intval(substr($cible, 3));
+                }
+
+                if (!empty($tds_concernes)) {
+                    $placeholders = implode(',', array_fill(0, count($tds_concernes), '?'));
+                    $checkClasse = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE groupe_td_id IN ($placeholders) AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
+                    $params = array_merge($tds_concernes, [$date_cours, $heure_fin, $heure_debut]);
+                    $checkClasse->execute($params);
+                    if ($checkClasse->fetchColumn() > 0) $conflit_msg .= "La classe (ou une partie de l'amphi) a déjà cours. ";
+                }
+
+                // --- 2. INSERTION SI AUCUN CONFLIT ---
+                if (!empty($conflit_msg)) {
+                    $msg_status = "<div class='alert error'>⚠️ <strong>Conflit détecté :</strong> " . $conflit_msg . "</div>";
                 } else {
                     $pdo->beginTransaction();
-
-                    // 1. Créer l'utilisateur (rôle enseignant)
-                    $stmtUser = $pdo->prepare("INSERT INTO utilisateurs (nom, prenom, email, mot_de_pass, role) VALUES (?, ?, ?, ?, 'enseignant')");
-                    $stmtUser->execute([$nom, $prenom, $email, $password]);
-                    $user_id = $pdo->lastInsertId();
-
-                    // 2. Lier à la table enseignants
-                    $stmtProf = $pdo->prepare("INSERT INTO enseignants (utilisateur_id, specialite) VALUES (?, ?)");
-                    $stmtProf->execute([$user_id, $specialite]);
-
+                    $stmt = $pdo->prepare("INSERT INTO sessions_cours (cours_id, enseignant_id, salle_id, date_cours, heure_debut, heure_fin, groupe_td_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    foreach ($tds_concernes as $td_id) {
+                        $stmt->execute([$cours_id, $enseignant_id, $salle_id, $date_cours, $heure_debut, $heure_fin, $td_id]);
+                    }
                     $pdo->commit();
-                    $msg_status = "<div class='alert success'>✅ Enseignant inscrit avec succès !</div>";
+                    $msg_status = "<div class='alert success'>✅ Séance planifiée sans conflit !</div>";
                 }
             } catch (PDOException $e) {
                 if ($pdo->inTransaction()) { $pdo->rollBack(); }
-                $msg_status = "<div class='alert error'>❌ Erreur lors de l'inscription : " . $e->getMessage() . "</div>";
+                $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
             }
+        }
+    }
+    // I. Modification d'une session
+    if (isset($_POST['modifier_session'])) {
+        $active_tab = "courses_schedule";
+        $session_id = intval($_POST['session_id']);
+        $enseignant_id = intval($_POST['enseignant_id']);
+        $salle_id = intval($_POST['salle_id']);
+        $date_cours = $_POST['date_cours'];
+        $heure_debut = $_POST['heure_debut'];
+        $heure_fin = $_POST['heure_fin'];
+
+        if (strtotime($heure_debut) >= strtotime($heure_fin)) {
+            $msg_status = "<div class='alert error'>❌ L'heure de fin doit être après l'heure de début.</div>";
         } else {
-            $msg_status = "<div class='alert error'>❌ Veuillez remplir tous les champs.</div>";
+            try {
+                // Détection de conflit simple (excluant la session actuelle)
+                $checkConflit = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours 
+                                               WHERE id != ? AND (enseignant_id = ? OR salle_id = ?) 
+                                               AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
+                $checkConflit->execute([$session_id, $enseignant_id, $salle_id, $date_cours, $heure_fin, $heure_debut]);
+                
+                if ($checkConflit->fetchColumn() > 0) {
+                    $msg_status = "<div class='alert error'>⚠️ <strong>Conflit détecté :</strong> L'enseignant ou la salle est déjà occupé sur ce créneau.</div>";
+                } else {
+                    $pdo->prepare("UPDATE sessions_cours SET enseignant_id = ?, salle_id = ?, date_cours = ?, heure_debut = ?, heure_fin = ? WHERE id = ?")
+                        ->execute([$enseignant_id, $salle_id, $date_cours, $heure_debut, $heure_fin, $session_id]);
+                    $msg_status = "<div class='alert success'>✅ Séance modifiée !</div>";
+                }
+            } catch (PDOException $e) {
+                $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
+            }
+        }
+    }
+
+    // J. Suppression d'une session
+    if (isset($_POST['supprimer_session'])) {
+        $active_tab = "courses_schedule";
+        $session_id = intval($_POST['session_id']);
+        try {
+            $pdo->prepare("DELETE FROM presences WHERE session_cours_id = ?")->execute([$session_id]);
+            $pdo->prepare("DELETE FROM sessions_cours WHERE id = ?")->execute([$session_id]);
+            $msg_status = "<div class='alert success'>🗑️ Séance supprimée !</div>";
+        } catch (PDOException $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
+        }
+    }
+
+    // K. Suppression d'un cours
+    if (isset($_POST['supprimer_cours'])) {
+        $active_tab = "courses_schedule";
+        $cours_id = intval($_POST['cours_id']);
+        try {
+            $pdo->beginTransaction();
+            $pdo->prepare("DELETE FROM notes WHERE cours_id = ?")->execute([$cours_id]);
+            $pdo->prepare("DELETE FROM inscriptions_cours WHERE cours_id = ?")->execute([$cours_id]);
+            
+            // Delete presences for sessions of this course
+            $sessions = $pdo->prepare("SELECT id FROM sessions_cours WHERE cours_id = ?");
+            $sessions->execute([$cours_id]);
+            $session_ids = $sessions->fetchAll(PDO::FETCH_COLUMN);
+            if (!empty($session_ids)) {
+                $inQuery = implode(',', array_fill(0, count($session_ids), '?'));
+                $pdo->prepare("DELETE FROM presences WHERE session_cours_id IN ($inQuery)")->execute($session_ids);
+            }
+            
+            $pdo->prepare("DELETE FROM sessions_cours WHERE cours_id = ?")->execute([$cours_id]);
+            $pdo->prepare("DELETE FROM cours WHERE id = ?")->execute([$cours_id]);
+            $pdo->commit();
+            $msg_status = "<div class='alert success'>🗑️ Cours supprimé !</div>";
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
 }
-
-// 3. RÉCUPÉRATION DES DONNÉES
 try {
-    // Liste des promotions
-    $list_promotions = $pdo->query("SELECT id, nom_promotion, annee_academique FROM promotions ORDER BY nom_promotion ASC, annee_academique DESC")->fetchAll();
+    $list_promotions = $pdo->query("SELECT id, nom_promotion, annee_academique FROM promotions ORDER BY nom_promotion ASC")->fetchAll();
     
-    // Liste des groupes de TD (Classes) avec leur promotion parente
-    $list_groupes = $pdo->query("SELECT g.id, g.nom AS groupe_nom, p.nom_promotion 
-                                 FROM groupes_td g 
-                                 JOIN amphis a ON g.amphi_id = a.id 
-                                 JOIN promotions p ON a.promotion_id = p.id 
-                                 ORDER BY p.nom_promotion ASC, g.nom ASC")->fetchAll();
+    // Nouvelle requête pour récupérer les groupes avec le nombre d'inscrits
+    $list_groupes = $pdo->query("
+        SELECT g.id, g.nom AS groupe_nom, p.nom_promotion, a.nom AS amphi_nom,
+               (SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = g.id) AS nb_inscrits
+        FROM groupes_td g 
+        JOIN amphis a ON g.amphi_id = a.id 
+        JOIN promotions p ON a.promotion_id = p.id 
+        ORDER BY p.nom_promotion ASC, a.nom ASC, g.nom ASC
+    ")->fetchAll();
 
-    // Liste des étudiants (Correction : ajout du groupe de TD et ID utilisateur pour modif)
-    $students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.id AS promo_id, p.nom_promotion AS promo_nom, g.id AS groupe_id, g.nom AS groupe_nom, e.statut_parcours 
-                             FROM utilisateurs u 
-                             LEFT JOIN etudiants e ON u.id = e.utilisateur_id 
-                             LEFT JOIN promotions p ON e.promotion_id = p.id 
-                             LEFT JOIN groupes_td g ON e.groupe_td_id = g.id
-                             WHERE u.role = 'etudiant' ORDER BY u.nom ASC")->fetchAll();
-
-    // Emploi du temps global
-    $allSessions = $pdo->query("SELECT s.*, c.nom_cours, u.nom AS prof_nom 
-                                FROM sessions_cours s 
-                                JOIN cours c ON s.cours_id = c.id 
-                                JOIN utilisateurs u ON s.enseignant_id = u.id 
-                                ORDER BY s.date_cours DESC, s.heure_debut ASC")->fetchAll();
-
-    // Listes pour le formulaire
+    $list_ue = $pdo->query("SELECT id, nom_ue FROM unites_enseignement ORDER BY nom_ue ASC")->fetchAll();
+    $list_salles = $pdo->query("SELECT id, nom_salle, type_salle FROM salles ORDER BY nom_salle ASC")->fetchAll();
     $list_cours = $pdo->query("SELECT id, nom_cours FROM cours ORDER BY nom_cours ASC")->fetchAll();
-    $list_profs = $pdo->query("SELECT id, nom, prenom FROM utilisateurs WHERE role = 'enseignant' ORDER BY nom ASC")->fetchAll();
+    $list_cours_details = $pdo->query("SELECT c.id, c.nom_cours, u.nom_ue FROM cours c LEFT JOIN unites_enseignement u ON c.ue_id = u.id ORDER BY c.nom_cours ASC")->fetchAll();
 
-    // Stats
+    
+    $students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.id AS promo_id, p.nom_promotion AS promo_nom, g.id AS groupe_id, g.nom AS groupe_nom, e.statut_parcours FROM utilisateurs u LEFT JOIN etudiants e ON u.id = e.utilisateur_id LEFT JOIN promotions p ON e.promotion_id = p.id LEFT JOIN groupes_td g ON e.groupe_td_id = g.id WHERE u.role = 'etudiant' ORDER BY u.nom ASC")->fetchAll();
+    $teachers_list = $pdo->query("SELECT id, nom, prenom, email FROM utilisateurs WHERE role = 'enseignant' ORDER BY nom ASC")->fetchAll();
+    
     $count_std = $pdo->query("SELECT COUNT(*) FROM utilisateurs WHERE role = 'etudiant'")->fetchColumn();
     $count_prf = $pdo->query("SELECT COUNT(*) FROM utilisateurs WHERE role = 'enseignant'")->fetchColumn();
     $count_crs = $pdo->query("SELECT COUNT(*) FROM cours")->fetchColumn();
 
+    // --- GESTION DU PLANNING PAR SEMAINE ---
+    $week_offset = isset($_GET['week']) ? intval($_GET['week']) : 0;
+    if (isset($_GET['week'])) { $active_tab = "courses_schedule"; }
+
+    $monday = new DateTime('monday this week');
+    if ($week_offset !== 0) {
+        $monday->modify($week_offset . ' weeks');
+    }
+    $start_date = $monday->format('Y-m-d');
+    $end_date = (clone $monday)->modify('+6 days')->format('Y-m-d');
+
+    // Emploi du temps de la semaine sélectionnée
+    $schedule_sessions = $pdo->prepare("SELECT s.*, c.nom_cours, u.nom AS prof_nom, u.prenom AS prof_prenom, sl.nom_salle, g.nom AS groupe_nom, p.nom_promotion 
+                                        FROM sessions_cours s 
+                                        JOIN cours c ON s.cours_id = c.id 
+                                        JOIN utilisateurs u ON s.enseignant_id = u.id 
+                                        JOIN salles sl ON s.salle_id = sl.id 
+                                        LEFT JOIN groupes_td g ON s.groupe_td_id = g.id 
+                                        LEFT JOIN amphis a ON g.amphi_id = a.id 
+                                        LEFT JOIN promotions p ON a.promotion_id = p.id 
+                                        WHERE s.date_cours >= ? AND s.date_cours <= ? 
+                                        ORDER BY s.date_cours ASC, s.heure_debut ASC");
+    $schedule_sessions->execute([$start_date, $end_date]);
+    $schedule_sessions = $schedule_sessions->fetchAll();
+
+    // Liste de toutes les séances pour la recherche
+    $all_sessions_list = $pdo->query("SELECT s.*, c.nom_cours, u.nom AS prof_nom, u.prenom AS prof_prenom, sl.nom_salle, g.nom AS groupe_nom, p.nom_promotion FROM sessions_cours s JOIN cours c ON s.cours_id = c.id JOIN utilisateurs u ON s.enseignant_id = u.id JOIN salles sl ON s.salle_id = sl.id LEFT JOIN groupes_td g ON s.groupe_td_id = g.id LEFT JOIN amphis a ON g.amphi_id = a.id LEFT JOIN promotions p ON a.promotion_id = p.id ORDER BY s.date_cours DESC, s.heure_debut DESC")->fetchAll();
+
 } catch (PDOException $e) {
-    $msg_status = "<div class='alert error'>Erreur de chargement : " . $e->getMessage() . "</div>";
+    $msg_status = "<div class='alert error'>Erreur : " . $e->getMessage() . "</div>";
 }
 ?>
 <!DOCTYPE html>
@@ -238,53 +399,48 @@ try {
     <style>
         :root { --bleu-ecole: #0A2240; --rouge-ecole: #D9383A; --gris-fond: #F7FAFC; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--gris-fond); margin: 0; display: flex; }
-        
-        /* SIDEBAR (Identique aux autres) */
         .sidebar { width: 260px; background: var(--bleu-ecole); color: white; height: 100vh; position: fixed; padding-top: 20px; }
-        .sidebar h3 { text-align: center; margin-bottom: 30px; color: white; }
+        .sidebar h3 { text-align: center; margin-bottom: 30px; }
         .sidebar h3 span { color: var(--rouge-ecole); }
-        .sidebar-menu { list-style: none; padding: 0; margin: 0; }
+        .sidebar-menu { list-style: none; padding: 0; }
         .sidebar-menu li a { display: block; padding: 15px 25px; color: #CBD5E0; text-decoration: none; font-weight: 500; cursor: pointer; transition: 0.3s; }
         .sidebar-menu li a:hover, .sidebar-menu li a.active { background: #1A365D; color: white; border-left: 4px solid var(--rouge-ecole); }
-        
-        /* CONTENU PRINCIPAL */
         .main-content { margin-left: 260px; padding: 40px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-panel { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--bleu-ecole); padding-bottom: 15px; margin-bottom: 30px; }
-        
         .tab-content { display: none; }
         .card { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 25px; }
-        
-        /* GRILLE STATS */
         .grid-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 25px; }
         .stat-box { padding: 20px; border-radius: 8px; color: white; text-align: center; }
         .stat-std { background: #2B6CB0; }
         .stat-prf { background: var(--rouge-ecole); }
         .stat-crs { background: #38A169; }
-
-        /* TABLES */
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #E2E8F0; }
         th { background: var(--bleu-ecole); color: white; }
-        
-        /* FORMULAIRES */
-        label { display: block; margin-bottom: 5px; font-weight: bold; color: var(--bleu-ecole); }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
         select, input, button { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #CBD5E0; border-radius: 4px; box-sizing: border-box; }
-        button { background: var(--rouge-ecole); color: white; border: none; font-weight: bold; cursor: pointer; }
+        button { background: var(--rouge-ecole); color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
         button:hover { background: #B8282A; }
-
         .alert { padding: 15px; border-radius: 4px; margin-bottom: 20px; font-weight: bold; }
         .alert.success { background: #C6F6D5; color: #22543D; }
         .alert.error { background: #FED7D7; color: #742A2A; }
-
-        /* MODAL EDIT */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
-        .modal-content { background: white; margin: 5% auto; padding: 20px; border-radius: 8px; width: 500px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #E2E8F0; padding-bottom: 10px; margin-bottom: 20px; }
-        .close-modal { cursor: pointer; font-size: 24px; color: #A0AEC0; }
-        .btn-edit { background: #4A5568; color: white; padding: 6px 10px; border-radius: 4px; text-decoration: none; font-size: 0.8em; cursor: pointer; border: none; }
-        .btn-edit:hover { background: #2D3748; }
-        .btn-delete { background: #E53E3E; color: white; padding: 6px 10px; border-radius: 4px; text-decoration: none; font-size: 0.8em; cursor: pointer; border: none; margin-left: 5px; }
-        .btn-delete:hover { background: #C53030; }
+        .modal-content { background: white; margin: 5% auto; padding: 20px; border-radius: 8px; width: 500px; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #EEE; padding-bottom: 10px; margin-bottom: 20px; }
+        .close-modal { cursor: pointer; font-size: 24px; color: #AAA; }
+        .btn-edit { background: #4A5568; color: white; padding: 6px 10px; border-radius: 4px; font-size: 0.8em; border: none; cursor: pointer; }
+        .btn-delete { background: #E53E3E; color: white; padding: 6px 10px; border-radius: 4px; font-size: 0.8em; border: none; cursor: pointer; margin-left: 5px; }
+        
+        /* SCHEDULE GRID */
+        .schedule-container { display: flex; flex-wrap: wrap; gap: 20px; }
+        .schedule-form { flex: 1; min-width: 300px; max-width: 350px; }
+        .schedule-grid-wrapper { flex: 3; min-width: 0; background: white; padding: 15px; border-radius: 8px; overflow-x: auto; }
+        .weekly-grid { display: grid; grid-template-columns: 60px repeat(5, minmax(140px, 1fr)); border: 1px solid #E2E8F0; min-width: 760px; }
+        .grid-header { background: var(--bleu-ecole); color: white; padding: 10px; text-align: center; font-weight: bold; border: 1px solid #1A365D; }
+        .time-slot { background: #EDF2F7; padding: 5px; text-align: center; font-size: 0.8em; border: 1px solid #E2E8F0; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .day-slot { min-height: 80px; border: 1px solid #E2E8F0; padding: 5px; background: white; }
+        .session-item { background: #EBF8FF; border-left: 3px solid #3182CE; margin-bottom: 5px; padding: 5px; font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; }
+        .session-time { font-weight: bold; color: #2B6CB0; display: block; margin-bottom: 2px; }
     </style>
 </head>
 <body>
@@ -294,22 +450,23 @@ try {
     <ul class="sidebar-menu">
         <li><a id="btn-dashboard" class="active" onclick="switchTab('dashboard')"><i class="fa-solid fa-gauge"></i> Dashboard</a></li>
         <li><a id="btn-students" onclick="switchTab('students')"><i class="fa-solid fa-user-graduate"></i> Étudiants</a></li>
-        <li><a id="btn-inscription" onclick="switchTab('inscription')"><i class="fa-solid fa-user-plus"></i> Inscrire un étudiant</a></li>
-        <li><a id="btn-inscription_prof" onclick="switchTab('inscription_prof')"><i class="fa-solid fa-chalkboard-user"></i> Inscrire un enseignant</a></li>
-        <li><a id="btn-planification" onclick="switchTab('planification')"><i class="fa-solid fa-calendar-plus"></i> Planifier un cours</a></li>
-        <li><a id="btn-calendar" onclick="switchTab('calendar')"><i class="fa-solid fa-calendar-days"></i> Emploi du temps</a></li>
-        <li><a href="deconnexion.php" style="color:#FEB2B2;"><i class="fa-solid fa-power-off"></i> Déconnexion</a></li>
+        <li><a id="btn-teachers" onclick="switchTab('teachers')"><i class="fa-solid fa-chalkboard-user"></i> Enseignants</a></li>
+        <li><a id="btn-courses_schedule" onclick="switchTab('courses_schedule')"><i class="fa-solid fa-book-open"></i> Cours & Planning</a></li>
+        <li><a id="btn-inscription" onclick="switchTab('inscription')"><i class="fa-solid fa-user-plus"></i> Inscrire Étudiant</a></li>
+        <li><a id="btn-inscription_prof" onclick="switchTab('inscription_prof')"><i class="fa-solid fa-chalkboard-user"></i> Inscrire Prof</a></li>
+        <li><a href="deconnexion.php" style="color:#FEB2B2; margin-top:20px;"><i class="fa-solid fa-power-off"></i> Déconnexion</a></li>
     </ul>
 </div>
 
 <div class="main-content">
     <div class="header-panel">
         <h2>Panel Administration</h2>
-        <span>Bienvenue, <strong>Admin <?php echo htmlspecialchars($_SESSION['user_nom']); ?></strong></span>
+        <span>Bonjour, <strong><?php echo htmlspecialchars($_SESSION['user_nom']); ?></strong></span>
     </div>
 
     <?php echo $msg_status; ?>
 
+    <!-- DASHBOARD -->
     <div id="tab-dashboard" class="tab-content" style="display: block;">
         <div class="grid-stats">
             <div class="stat-box stat-std"><h3><?php echo $count_std; ?></h3><p>Étudiants</p></div>
@@ -317,34 +474,28 @@ try {
             <div class="stat-box stat-crs"><h3><?php echo $count_crs; ?></h3><p>Cours</p></div>
         </div>
         <div class="card">
-            <h3>Résumé de l'activité</h3>
-            <p>Depuis cet espace, vous pouvez gérer les ressources humaines du campus et organiser les séances de cours dans les différentes salles disponibles.</p>
+            <h3>Bienvenue dans votre espace de gestion</h3>
+            <p>Utilisez le menu latéral pour gérer les élèves, les professeurs et organiser l'emploi du temps de l'établissement.</p>
         </div>
     </div>
 
+    <!-- ETUDIANTS -->
     <div id="tab-students" class="tab-content">
         <div class="card">
-            <h3><i class="fa-solid fa-users"></i> Étudiants inscrits</h3>
+            <h3>Liste des Étudiants</h3>
             <table>
-                <thead>
-                    <tr><th>Nom & Prénom</th><th>Email</th><th>Promotion</th><th>Classe (TD)</th><th>Actions</th></tr>
-                </thead>
+                <thead><tr><th>Nom & Prénom</th><th>Promotion</th><th>Classe</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php foreach($students as $s): ?>
                     <tr>
-                        <td><strong><?php echo htmlspecialchars($s['nom'].' '.$s['prenom']); ?></strong></td>
-                        <td><?php echo htmlspecialchars($s['email']); ?></td>
-                        <td><span style="color:#2B6CB0; font-weight:bold;"><?php echo htmlspecialchars($s['promo_nom'] ?? 'Non assigné'); ?></span></td>
-                        <td><span style="background:#E2E8F0; padding:4px 8px; border-radius:4px; font-size: 0.9em;"><?php echo htmlspecialchars($s['groupe_nom'] ?? 'Aucune'); ?></span></td>
+                        <td><strong><?php echo htmlspecialchars($s['nom'].' '.$s['prenom']); ?></strong><br><small><?php echo $s['email']; ?></small></td>
+                        <td><?php echo $s['promo_nom']; ?></td>
+                        <td><?php echo $s['groupe_nom'] ?? 'N/A'; ?></td>
                         <td>
-                            <button class="btn-edit" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($s)); ?>)">
-                                <i class="fa-solid fa-pen-to-square"></i> Modifier
-                            </button>
-                            <form method="POST" style="display:inline;" onsubmit="return confirm('Êtes-vous sûr de vouloir supprimer cet étudiant ? Cette action est irréversible.');">
+                            <button class="btn-edit" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($s)); ?>)"><i class="fa-solid fa-pen"></i></button>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer ?');">
                                 <input type="hidden" name="user_id" value="<?php echo $s['id']; ?>">
-                                <button type="submit" name="supprimer_etudiant" class="btn-delete">
-                                    <i class="fa-solid fa-trash"></i> Supprimer
-                                </button>
+                                <button type="submit" name="supprimer_etudiant" class="btn-delete"><i class="fa-solid fa-trash"></i></button>
                             </form>
                         </td>
                     </tr>
@@ -354,217 +505,425 @@ try {
         </div>
     </div>
 
-    <!-- MODAL DE MODIFICATION -->
-    <div id="editModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Modifier le profil étudiant</h3>
-                <span class="close-modal" onclick="closeEditModal()">&times;</span>
-            </div>
-            <form method="POST">
-                <input type="hidden" name="user_id" id="edit_user_id">
-                
-                <label>Nom</label>
-                <input type="text" name="nom" id="edit_nom" required>
-
-                <label>Prénom</label>
-                <input type="text" name="prenom" id="edit_prenom" required>
-
-                <label>Email</label>
-                <input type="email" name="email" id="edit_email" required>
-
-                <label>Promotion</label>
-                <select name="promotion_id" id="edit_promotion_id" required>
-                    <?php foreach($list_promotions as $promo): ?>
-                        <option value="<?php echo $promo['id']; ?>"><?php echo htmlspecialchars($promo['nom_promotion']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-
-                <label>Classe (Groupe TD)</label>
-                <select name="groupe_td_id" id="edit_groupe_td_id">
-                    <option value="">-- Sans classe --</option>
-                    <?php foreach($list_groupes as $grp): ?>
-                        <option value="<?php echo $grp['id']; ?>"><?php echo htmlspecialchars($grp['nom_promotion'] . ' - ' . $grp['groupe_nom']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-
-                <label>Statut Parcours</label>
-                <select name="statut_parcours" id="edit_statut_parcours" required>
-                    <option value="initial">Initial</option>
-                    <option value="alternant">Alternant</option>
-                </select>
-
-                <button type="submit" name="modifier_etudiant">Enregistrer les modifications</button>
-            </form>
-        </div>
-    </div>
-
-    <div id="tab-inscription" class="tab-content">
-        <div class="card" style="max-width: 600px; margin: 0 auto;">
-            <h3><i class="fa-solid fa-user-plus"></i> Inscrire un nouvel étudiant</h3>
-            <form method="POST">
-                <label>Nom</label>
-                <input type="text" name="nom" required placeholder="Ex: MARTIN">
-
-                <label>Prénom</label>
-                <input type="text" name="prenom" required placeholder="Ex: Jean">
-
-                <label>Email École</label>
-                <input type="email" name="email" required placeholder="Ex: jean.martin@ecole.fr">
-
-                <label>Mot de passe provisoire</label>
-                <input type="password" name="password" required value="Etudiant2026!">
-
-                <label>Promotion</label>
-                <select name="promotion_id" required>
-                    <?php foreach($list_promotions as $promo): ?>
-                        <option value="<?php echo $promo['id']; ?>"><?php echo htmlspecialchars($promo['nom_promotion'] . ' (' . $promo['annee_academique'] . ')'); ?></option>
-                    <?php endforeach; ?>
-                </select>
-
-                <label>Classe (Groupe TD)</label>
-                <select name="groupe_td_id">
-                    <option value="">-- Sans classe pour le moment --</option>
-                    <?php foreach($list_groupes as $grp): ?>
-                        <option value="<?php echo $grp['id']; ?>"><?php echo htmlspecialchars($grp['nom_promotion'] . ' - ' . $grp['groupe_nom']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-
-                <label>Statut Parcours</label>
-                <select name="statut_parcours" required>
-                    <option value="initial">Initial</option>
-                    <option value="alternant">Alternant</option>
-                </select>
-
-                <button type="submit" name="inscrire_etudiant">Valider l'inscription</button>
-            </form>
-        </div>
-    </div>
-
-    <div id="tab-inscription_prof" class="tab-content">
-        <div class="card" style="max-width: 600px; margin: 0 auto;">
-            <h3><i class="fa-solid fa-chalkboard-user"></i> Inscrire un nouvel enseignant</h3>
-            <form method="POST">
-                <label>Nom</label>
-                <input type="text" name="nom" required placeholder="Ex: DUPONT">
-
-                <label>Prénom</label>
-                <input type="text" name="prenom" required placeholder="Ex: Pierre">
-
-                <label>Email École</label>
-                <input type="email" name="email" required placeholder="Ex: pierre.dupont@ecole.fr">
-
-                <label>Mot de passe provisoire</label>
-                <input type="password" name="password" required value="Enseignant2026!">
-
-                <label>Spécialité / Discipline</label>
-                <input type="text" name="specialite" placeholder="Ex: Mathématiques, Développement Web...">
-
-                <button type="submit" name="inscrire_enseignant">Valider l'inscription</button>
-            </form>
-        </div>
-    </div>
-
-    <div id="tab-planification" class="tab-content">
-        <div class="card" style="max-width: 600px; margin: 0 auto;">
-            <h3><i class="fa-solid fa-calendar-plus"></i> Programmer une séance</h3>
-            <form method="POST">
-                <label>Cours / Matière</label>
-                <select name="cours_id" required>
-                    <?php foreach($list_cours as $c): ?>
-                        <option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['nom_cours']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-
-                <label>Enseignant</label>
-                <select name="enseignant_id" required>
-                    <?php foreach($list_profs as $p): ?>
-                        <option value="<?php echo $p['id']; ?>">M. <?php echo htmlspecialchars($p['nom'].' '.$p['prenom']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-
-                <label>Salle</label>
-                <input type="text" name="salle" required placeholder="Ex: Labo 3, Amphi A...">
-
-                <label>Date</label>
-                <input type="date" name="date_cours" required>
-
-                <label>Heure Début</label>
-                <input type="time" name="heure_debut" required>
-
-                <label>Heure Fin</label>
-                <input type="time" name="heure_fin" required>
-
-                <button type="submit" name="planifier_cours">Enregistrer la séance</button>
-            </form>
-        </div>
-    </div>
-
-    <div id="tab-calendar" class="tab-content">
+    <!-- ENSEIGNANTS -->
+    <div id="tab-teachers" class="tab-content">
         <div class="card">
-            <h3><i class="fa-solid fa-calendar-days"></i> Emploi du temps global</h3>
+            <h3>Liste des Enseignants</h3>
             <table>
-                <thead>
-                    <tr><th>Date</th><th>Horaire</th><th>Cours</th><th>Professeur</th><th>Salle</th></tr>
-                </thead>
+                <thead><tr><th>Nom & Prénom</th><th>Email</th><th>Actions</th></tr></thead>
                 <tbody>
-                    <?php foreach($allSessions as $sess): ?>
+                    <?php foreach($teachers_list as $t): ?>
                     <tr>
-                        <td><strong><?php echo date('d/m/Y', strtotime($sess['date_cours'])); ?></strong></td>
-                        <td style="color:var(--rouge-ecole); font-weight:bold;"><?php echo substr($sess['heure_debut'],0,5); ?> - <?php echo substr($sess['heure_fin'],0,5); ?></td>
-                        <td><?php echo htmlspecialchars($sess['nom_cours']); ?></td>
-                        <td>M. <?php echo htmlspecialchars($sess['prof_nom']); ?></td>
-                        <td><span style="background:#E2E8F0; padding:4px 8px; border-radius:4px;"><?php echo htmlspecialchars($sess['salle']); ?></span></td>
+                        <td><strong><?php echo htmlspecialchars($t['nom'].' '.$t['prenom']); ?></strong></td>
+                        <td><?php echo $t['email']; ?></td>
+                        <td>
+                            <button class="btn-edit" onclick="openEditTeacherModal(<?php echo htmlspecialchars(json_encode($t)); ?>)"><i class="fa-solid fa-pen"></i></button>
+                            <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer ?');">
+                                <input type="hidden" name="user_id" value="<?php echo $t['id']; ?>">
+                                <button type="submit" name="supprimer_enseignant" class="btn-delete"><i class="fa-solid fa-trash"></i></button>
+                            </form>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
     </div>
+
+    <!-- COURS & PLANNING -->
+    <div id="tab-courses_schedule" class="tab-content">
+        <div class="schedule-container">
+            <div class="schedule-form">
+                <div class="card">
+                    <h4>Créer un Cours</h4>
+                    <form method="POST">
+                        <input type="text" name="nom_cours" required placeholder="Nom du cours">
+                        <select name="ue_id" required>
+                            <option value="">-- Unité d'Enseignement (UE) --</option>
+                            <?php foreach($list_ue as $ue): ?>
+                                <option value="<?php echo $ue['id']; ?>"><?php echo htmlspecialchars($ue['nom_ue']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button type="submit" name="creer_cours">Créer</button>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Planifier une Séance</h4>
+                    <form method="POST">
+                        <select name="cours_id" required>
+                            <option value="">-- Matière --</option>
+                            <?php foreach($list_cours as $c): ?><option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['nom_cours']); ?></option><?php endforeach; ?>
+                        </select>
+                        <select name="enseignant_id" required>
+                            <option value="">-- Enseignant --</option>
+                            <?php foreach($teachers_list as $p): ?><option value="<?php echo $p['id']; ?>">M. <?php echo htmlspecialchars($p['nom'].' '.$p['prenom']); ?></option><?php endforeach; ?>
+                        </select>
+                        <select name="cible_cours" required>
+                            <option value="">-- Classe concernée --</option>
+                            <optgroup label="Amphis (Cours Magistraux)">
+                                <?php 
+                                $amphis = $pdo->query("SELECT a.id, a.nom, p.nom_promotion FROM amphis a JOIN promotions p ON a.promotion_id = p.id")->fetchAll();
+                                foreach($amphis as $a): ?>
+                                    <option value="amphi_<?php echo $a['id']; ?>">Amphi : <?php echo htmlspecialchars($a['nom_promotion'] . ' - ' . $a['nom']); ?></option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                            <optgroup label="Groupes TD (Travaux Dirigés)">
+                                <?php foreach($list_groupes as $g): ?>
+                                    <option value="td_<?php echo $g['id']; ?>">TD : <?php echo htmlspecialchars($g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom']); ?></option>
+                                <?php endforeach; ?>
+                            </optgroup>
+                        </select>
+                        <select name="salle_id" required>
+                            <option value="">-- Salle --</option>
+                            <?php foreach($list_salles as $sl): ?><option value="<?php echo $sl['id']; ?>"><?php echo htmlspecialchars($sl['nom_salle'] . ' (' . $sl['type_salle'] . ')'); ?></option><?php endforeach; ?>
+                        </select>
+                        <input type="date" name="date_cours" required>
+                        <div style="display:flex; gap:5px;">
+                            <input type="time" name="heure_debut" required>
+                            <input type="time" name="heure_fin" required>
+                        </div>
+                        <button type="submit" name="planifier_session">Placer</button>
+                    </form>
+                </div>
+            </div>
+            <div class="schedule-grid-wrapper card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
+                    <h4 style="margin:0;"><i class="fa-solid fa-calendar-week"></i> Planning de la Semaine</h4>
+                    
+                    <!-- NAVIGATION SEMAINES -->
+                    <div style="display:flex; align-items:center; gap:15px; background:#EDF2F7; padding:5px 15px; border-radius:6px;">
+                        <a href="?week=<?php echo $week_offset - 1; ?>" class="btn-nav-week" title="Semaine précédente" style="color:var(--bleu-ecole); text-decoration:none;"><i class="fa-solid fa-chevron-left"></i></a>
+                        <span style="font-weight:bold; font-size:0.9em; min-width:180px; text-align:center;">
+                            Semaine du <?php echo $monday->format('d/m'); ?> au <?php echo (clone $monday)->modify('+4 days')->format('d/m'); ?>
+                        </span>
+                        <a href="?week=<?php echo $week_offset + 1; ?>" class="btn-nav-week" title="Semaine suivante" style="color:var(--bleu-ecole); text-decoration:none;"><i class="fa-solid fa-chevron-right"></i></a>
+                    </div>
+
+                    <?php 
+                    $filter_classes = []; $filter_profs = []; $filter_cours = [];
+                    foreach($schedule_sessions as $s) {
+                        $c_name = $s['groupe_nom'] ? $s['nom_promotion'].' - '.$s['groupe_nom'] : 'Amphi '.$s['nom_promotion'];
+                        $filter_classes[$c_name] = $c_name;
+                        $filter_profs[$s['prof_nom'].' '.$s['prof_prenom']] = 'M. '.$s['prof_nom'].' '.$s['prof_prenom'];
+                        $filter_cours[$s['nom_cours']] = $s['nom_cours'];
+                    }
+                    asort($filter_classes); asort($filter_profs); asort($filter_cours);
+                    ?>
+                    <select id="scheduleFilter" onchange="applyScheduleFilter()" style="width: 280px; padding: 8px; border: 1px solid #CBD5E0; border-radius: 4px; margin:0; font-size:0.9em; background:white;">
+                        <option value="ALL">-- Afficher tout le planning --</option>
+                        <optgroup label="Filtrer par Classe">
+                            <?php foreach($filter_classes as $fc): ?><option value="CLASS_<?php echo htmlspecialchars($fc); ?>"><?php echo htmlspecialchars($fc); ?></option><?php endforeach; ?>
+                        </optgroup>
+                        <optgroup label="Filtrer par Enseignant">
+                            <?php foreach($filter_profs as $fp): ?><option value="PROF_<?php echo htmlspecialchars($fp); ?>"><?php echo htmlspecialchars($fp); ?></option><?php endforeach; ?>
+                        </optgroup>
+                        <optgroup label="Filtrer par Matière">
+                            <?php foreach($filter_cours as $fc): ?><option value="COURS_<?php echo htmlspecialchars($fc); ?>"><?php echo htmlspecialchars($fc); ?></option><?php endforeach; ?>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="weekly-grid">
+                    <div class="grid-header">Heures</div>
+                    <?php 
+                    $days_names = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'];
+                    for($i=0; $i<5; $i++): 
+                        $current_day = clone $monday;
+                        if($i > 0) $current_day->modify("+$i days");
+                    ?>
+                        <div class="grid-header"><?php echo $days_names[$i] . ' <span style="font-weight:normal;font-size:0.8em;">' . $current_day->format('d/m') . '</span>'; ?></div>
+                    <?php endfor; ?>
+                    <?php $slots = ["08:00", "10:00", "13:00", "15:00", "17:00"];
+                    foreach($slots as $slot): 
+                        $slot_hour = intval(substr($slot, 0, 2));
+                    ?>
+                        <div class="time-slot"><?php echo $slot; ?></div>
+                        <?php for($day=1; $day<=5; $day++): ?>
+                            <div class="day-slot">
+                                <?php foreach($schedule_sessions as $sess): 
+                                    $hour = intval(substr($sess['heure_debut'], 0, 2));
+                                    $is_in_slot = false;
+                                    if ($slot_hour == 8 && $hour >= 8 && $hour < 10) $is_in_slot = true;
+                                    elseif ($slot_hour == 10 && $hour >= 10 && $hour < 13) $is_in_slot = true;
+                                    elseif ($slot_hour == 13 && $hour >= 13 && $hour < 15) $is_in_slot = true;
+                                    elseif ($slot_hour == 15 && $hour >= 15 && $hour < 17) $is_in_slot = true;
+                                    elseif ($slot_hour == 17 && $hour >= 17) $is_in_slot = true;
+
+                                    if(date('N', strtotime($sess['date_cours'])) == $day && $is_in_slot): 
+                                        $className = $sess['groupe_nom'] ? $sess['nom_promotion'].' - '.$sess['groupe_nom'] : 'Amphi '.$sess['nom_promotion'];
+                                        $profName = $sess['prof_nom'].' '.$sess['prof_prenom'];
+                                    ?>
+                                    <div class="session-item" style="cursor:pointer;" 
+                                         data-class="CLASS_<?php echo htmlspecialchars($className); ?>"
+                                         data-prof="PROF_<?php echo htmlspecialchars('M. '.$profName); ?>"
+                                         data-cours="COURS_<?php echo htmlspecialchars($sess['nom_cours']); ?>"
+                                         data-json="<?php echo htmlspecialchars(json_encode($sess), ENT_QUOTES, 'UTF-8'); ?>"
+                                         onclick="openEditSessionModal(JSON.parse(this.getAttribute('data-json')))">
+                                        <span class="session-time"><?php echo substr($sess['heure_debut'],0,5).' - '.substr($sess['heure_fin'],0,5); ?></span>
+                                        <strong><?php echo htmlspecialchars($sess['nom_cours']); ?></strong><br>
+                                        <small><?php echo htmlspecialchars($className); ?> (<?php echo htmlspecialchars($sess['nom_salle']); ?>)</small>
+                                    </div>
+                                <?php endif; endforeach; ?>
+                            </div>
+                        <?php endfor; ?>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top: 25px;">
+            <h3><i class="fa-solid fa-list"></i> Liste de Toutes les Séances</h3>
+            <input type="text" id="searchSessionInput" placeholder="🔍 Rechercher une séance (Date, Matière, Classe, Professeur, Salle)..." onkeyup="filterSessions()" style="padding: 12px; width: 100%; box-sizing: border-box; font-size: 1em; border: 2px solid #E2E8F0; border-radius: 6px; margin-bottom: 15px;">
+            <table id="sessionsTable">
+                <thead>
+                    <tr><th>Date & Horaires</th><th>Matière</th><th>Classe</th><th>Enseignant</th><th>Salle</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach($all_sessions_list as $sess): ?>
+                    <tr>
+                        <td>
+                            <strong><?php echo date('d/m/Y', strtotime($sess['date_cours'])); ?></strong><br>
+                            <small><?php echo substr($sess['heure_debut'],0,5).' - '.substr($sess['heure_fin'],0,5); ?></small>
+                        </td>
+                        <td><strong><?php echo htmlspecialchars($sess['nom_cours']); ?></strong></td>
+                        <td><span style="color:#2B6CB0; font-weight:bold;"><?php echo htmlspecialchars($sess['groupe_nom'] ? $sess['nom_promotion'].' - '.$sess['groupe_nom'] : 'Amphi '.$sess['nom_promotion']); ?></span></td>
+                        <td>M. <?php echo htmlspecialchars($sess['prof_nom'].' '.$sess['prof_prenom']); ?></td>
+                        <td><span style="background:#E2E8F0; padding:4px 8px; border-radius:4px; font-size: 0.9em;"><?php echo htmlspecialchars($sess['nom_salle']); ?></span></td>
+                        <td style="width: 100px;">
+                            <button class="btn-edit" 
+                                    data-json="<?php echo htmlspecialchars(json_encode($sess), ENT_QUOTES, 'UTF-8'); ?>"
+                                    onclick="openEditSessionModal(JSON.parse(this.getAttribute('data-json')))">
+                                <i class="fa-solid fa-pen-to-square"></i> Gérer
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- INSCRIPTION ETUDIANT -->
+    <div id="tab-inscription" class="tab-content">
+        <div class="card" style="max-width: 500px; margin: auto;">
+            <h3>Inscrire un Étudiant</h3>
+            <form method="POST">
+                <input type="text" name="nom" required placeholder="Nom">
+                <input type="text" name="prenom" required placeholder="Prénom">
+                <input type="email" name="email" required placeholder="Email">
+                <input type="password" name="password" required value="Etudiant2026!">
+                <select name="promotion_id" required>
+                    <option value="">-- Promotion --</option>
+                    <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
+                </select>
+                <select name="groupe_td_id" required>
+                    <option value="">-- Classe (Obligatoire) --</option>
+                    <?php foreach($list_groupes as $g): 
+                        $isFull = $g['nb_inscrits'] >= 25;
+                        $label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
+                    ?>
+                        <option value="<?php echo $g['id']; ?>" <?php if($isFull) echo 'disabled style="color:red;"'; ?>><?php echo htmlspecialchars($label); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="statut_parcours" required>
+                    <option value="initial">Initial</option><option value="alternant">Alternant</option>
+                </select>
+                <button type="submit" name="inscrire_etudiant">Valider</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- INSCRIPTION PROF -->
+    <div id="tab-inscription_prof" class="tab-content">
+        <div class="card" style="max-width: 500px; margin: auto;">
+            <h3>Inscrire un Enseignant</h3>
+            <form method="POST">
+                <input type="text" name="nom" required placeholder="Nom">
+                <input type="text" name="prenom" required placeholder="Prénom">
+                <input type="email" name="email" required placeholder="Email">
+                <input type="password" name="password" required value="Enseignant2026!">
+                <button type="submit" name="inscrire_enseignant">Valider</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL ETUDIANT -->
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h3>Modifier l'étudiant</h3><span class="close-modal" onclick="closeEditModal()">&times;</span></div>
+        <form method="POST">
+            <input type="hidden" name="user_id" id="edit_user_id">
+            <input type="text" name="nom" id="edit_nom" required>
+            <input type="text" name="prenom" id="edit_prenom" required>
+            <input type="email" name="email" id="edit_email" required>
+            <select name="promotion_id" id="edit_promotion_id" required>
+                <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
+            </select>
+            <select name="groupe_td_id" id="edit_groupe_td_id" required>
+                <option value="">-- Classe (Obligatoire) --</option>
+                <?php foreach($list_groupes as $g): 
+                    $isFull = $g['nb_inscrits'] >= 25;
+                    $label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
+                ?>
+                    <option value="<?php echo $g['id']; ?>" <?php if($isFull) echo 'disabled style="color:red;"'; ?>><?php echo htmlspecialchars($label); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <select name="statut_parcours" id="edit_statut_parcours" required>
+                <option value="initial">Initial</option><option value="alternant">Alternant</option>
+            </select>
+            <button type="submit" name="modifier_etudiant">Enregistrer</button>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL PROF -->
+<div id="editTeacherModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h3>Modifier l'enseignant</h3><span class="close-modal" onclick="closeEditTeacherModal()">&times;</span></div>
+        <form method="POST">
+            <input type="hidden" name="user_id" id="edit_prof_id">
+            <input type="text" name="nom" id="edit_prof_nom" required>
+            <input type="text" name="prenom" id="edit_prof_prenom" required>
+            <input type="email" name="email" id="edit_prof_email" required>
+            <button type="submit" name="modifier_enseignant">Enregistrer</button>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL SESSION -->
+<div id="editSessionModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h3>Gérer la séance</h3><span class="close-modal" onclick="closeEditSessionModal()">&times;</span></div>
+        <form method="POST">
+            <input type="hidden" name="session_id" id="edit_sess_id">
+            
+            <label>Matière (Fixe)</label>
+            <input type="text" id="edit_sess_cours" readonly style="background:#f0f0f0;">
+            
+            <label>Classe (Fixe)</label>
+            <input type="text" id="edit_sess_classe" readonly style="background:#f0f0f0;">
+
+            <label>Enseignant</label>
+            <select name="enseignant_id" id="edit_sess_prof" required>
+                <?php foreach($teachers_list as $p): ?><option value="<?php echo $p['id']; ?>">M. <?php echo htmlspecialchars($p['nom'].' '.$p['prenom']); ?></option><?php endforeach; ?>
+            </select>
+            
+            <label>Salle</label>
+            <select name="salle_id" id="edit_sess_salle" required>
+                <?php foreach($list_salles as $sl): ?><option value="<?php echo $sl['id']; ?>"><?php echo htmlspecialchars($sl['nom_salle']); ?></option><?php endforeach; ?>
+            </select>
+            
+            <label>Date</label>
+            <input type="date" name="date_cours" id="edit_sess_date" required>
+            
+            <label>Horaires</label>
+            <div style="display:flex; gap:5px;">
+                <input type="time" name="heure_debut" id="edit_sess_debut" required>
+                <input type="time" name="heure_fin" id="edit_sess_fin" required>
+            </div>
+            
+            <div style="display:flex; justify-content:space-between; margin-top:15px;">
+                <button type="submit" name="modifier_session" style="width:48%;">Mettre à jour</button>
+                <button type="submit" name="supprimer_session" class="btn-delete" style="width:48%; margin:0;" onclick="return confirm('Supprimer cette séance ?');" formnovalidate>Supprimer</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <script>
     function switchTab(name) {
-        // Cacher tous les contenus
         document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
-        // Retirer la classe active de tous les boutons
         document.querySelectorAll('.sidebar-menu li a').forEach(b => b.classList.remove('active'));
         
-        // Afficher l'onglet demandé
-        document.getElementById('tab-' + name).style.display = 'block';
-        // Activer le bouton cliqué
-        document.getElementById('btn-' + name).classList.add('active');
-    }
-
-    // Gestion du retour après POST
-    <?php if($active_tab !== 'dashboard'): ?>
-        switchTab('<?php echo $active_tab; ?>');
-    <?php endif; ?>
-
-    // Fonctions pour le Modal de Modification
-    function openEditModal(student) {
-        document.getElementById('edit_user_id').value = student.id;
-        document.getElementById('edit_nom').value = student.nom;
-        document.getElementById('edit_prenom').value = student.prenom;
-        document.getElementById('edit_email').value = student.email;
-        document.getElementById('edit_promotion_id').value = student.promo_id;
-        document.getElementById('edit_groupe_td_id').value = student.groupe_id || "";
-        document.getElementById('edit_statut_parcours').value = student.statut_parcours;
+        let targetContent = document.getElementById('tab-' + name);
+        let targetBtn = document.getElementById('btn-' + name);
         
-        document.getElementById('editModal').style.display = 'block';
-    }
-
-    function closeEditModal() {
-        document.getElementById('editModal').style.display = 'none';
-    }
-
-    // Fermer le modal si on clique en dehors
-    window.onclick = function(event) {
-        if (event.target == document.getElementById('editModal')) {
-            closeEditModal();
+        if (targetContent) targetContent.style.display = 'block';
+        if (targetBtn) targetBtn.classList.add('active');
+        
+        // Remove week parameter from URL when clicking away from schedule to prevent locking
+        if (name !== 'courses_schedule' && window.location.search.includes('week=')) {
+            window.history.pushState({}, document.title, window.location.pathname);
         }
     }
-</script>
 
+    // Initialize the active tab based on PHP logic
+    switchTab('<?php echo $active_tab; ?>');
+
+    function openEditModal(s) {
+        document.getElementById('edit_user_id').value = s.id;
+        document.getElementById('edit_nom').value = s.nom;
+        document.getElementById('edit_prenom').value = s.prenom;
+        document.getElementById('edit_email').value = s.email;
+        document.getElementById('edit_promotion_id').value = s.promo_id;
+        document.getElementById('edit_groupe_td_id').value = s.groupe_id || "";
+        document.getElementById('edit_statut_parcours').value = s.statut_parcours;
+        document.getElementById('editModal').style.display = 'block';
+    }
+    function closeEditModal() { document.getElementById('editModal').style.display = 'none'; }
+
+    function openEditTeacherModal(t) {
+        document.getElementById('edit_prof_id').value = t.id;
+        document.getElementById('edit_prof_nom').value = t.nom;
+        document.getElementById('edit_prof_prenom').value = t.prenom;
+        document.getElementById('edit_prof_email').value = t.email;
+        document.getElementById('editTeacherModal').style.display = 'block';
+    }
+    function closeEditTeacherModal() { document.getElementById('editTeacherModal').style.display = 'none'; }
+
+    function openEditSessionModal(sess) {
+        document.getElementById('edit_sess_id').value = sess.id;
+        document.getElementById('edit_sess_cours').value = sess.nom_cours;
+        document.getElementById('edit_sess_classe').value = sess.groupe_nom ? (sess.nom_promotion + ' - ' + sess.groupe_nom) : 'Amphi Complet (' + sess.nom_promotion + ')';
+        document.getElementById('edit_sess_prof').value = sess.enseignant_id;
+        document.getElementById('edit_sess_salle').value = sess.salle_id;
+        document.getElementById('edit_sess_date').value = sess.date_cours;
+        document.getElementById('edit_sess_debut').value = sess.heure_debut.substring(0, 5);
+        document.getElementById('edit_sess_fin').value = sess.heure_fin.substring(0, 5);
+        document.getElementById('editSessionModal').style.display = 'block';
+    }
+    function closeEditSessionModal() { document.getElementById('editSessionModal').style.display = 'none'; }
+
+    function filterSessions() {
+        let input = document.getElementById("searchSessionInput");
+        let filter = input.value.toUpperCase();
+        let table = document.getElementById("sessionsTable");
+        let tr = table.getElementsByTagName("tr");
+
+        for (let i = 1; i < tr.length; i++) {
+            let rowText = tr[i].textContent || tr[i].innerText;
+            if (rowText.toUpperCase().indexOf(filter) > -1) {
+                tr[i].style.display = "";
+            } else {
+                tr[i].style.display = "none";
+            }
+        }
+    }
+
+    function applyScheduleFilter() {
+        let filterVal = document.getElementById("scheduleFilter").value;
+        let items = document.querySelectorAll(".session-item");
+
+        items.forEach(item => {
+            if (filterVal === "ALL") {
+                item.style.display = "block";
+            } else {
+                let matchClass = item.getAttribute("data-class") === filterVal;
+                let matchProf = item.getAttribute("data-prof") === filterVal;
+                let matchCours = item.getAttribute("data-cours") === filterVal;
+                
+                if (matchClass || matchProf || matchCours) {
+                    item.style.display = "block";
+                } else {
+                    item.style.display = "none";
+                }
+            }
+        });
+    }
+
+    window.onclick = function(e) {
+        if (e.target.className === 'modal') { closeEditModal(); closeEditTeacherModal(); closeEditSessionModal(); }
+    }
+</script>
 </body>
 </html>

@@ -1,12 +1,10 @@
 <?php
 require_once 'config.php';
-try {
-    $stmt = $pdo->query("SELECT id, email, nom, prenom, role, mot_de_pass FROM utilisateurs ORDER BY id DESC LIMIT 5");
-    $users = $stmt->fetchAll();
-    echo "<pre>";
-    print_r($users);
-    echo "</pre>";
-} catch (Exception $e) {
-    echo "Error: " . $e->getMessage();
+$users = $pdo->query("SELECT email, mot_de_pass, role FROM utilisateurs")->fetchAll(PDO::FETCH_ASSOC);
+echo "<h3>Liste des utilisateurs enregistrés :</h3>";
+echo "<table border='1'><tr><th>Email</th><th>Mot de Passe</th><th>Rôle</th></tr>";
+foreach($users as $u) {
+    echo "<tr><td>{$u['email']}</td><td>{$u['mot_de_pass']}</td><td>{$u['role']}</td></tr>";
 }
+echo "</table>";
 ?>
