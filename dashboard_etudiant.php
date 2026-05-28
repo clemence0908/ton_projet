@@ -122,6 +122,8 @@ $date_fin_semaine = date('Y-m-d', strtotime('+6 days', $timestamp_lundi));
 
 // 3. Emploi du temps Hebdomadaire
 try {
+    // On utilise inscriptions_cours comme base (remplie automatiquement via config.php)
+    // Et on filtre strictement par groupe de TD ou Amphi
     $stmtEdt = $pdo->prepare("
         SELECT s.*, c.nom_cours, sl.nom_salle, u.nom AS prof_nom, u.prenom AS prof_prenom
         FROM sessions_cours s
@@ -129,7 +131,10 @@ try {
         JOIN salles sl ON s.salle_id = sl.id
         JOIN utilisateurs u ON s.enseignant_id = u.id
         JOIN inscriptions_cours ic ON c.id = ic.cours_id
-        WHERE ic.etudiant_id = ? AND s.date_cours BETWEEN ? AND ?
+        JOIN etudiants e ON ic.etudiant_id = e.utilisateur_id
+        WHERE ic.etudiant_id = ? 
+          AND s.date_cours BETWEEN ? AND ?
+          AND (s.groupe_td_id IS NULL OR s.groupe_td_id = e.groupe_td_id)
         ORDER BY s.date_cours ASC, s.heure_debut ASC
     ");
     $stmtEdt->execute([$etudiant_id, $date_debut_semaine, $date_fin_semaine]);
@@ -141,16 +146,17 @@ try {
 
 // 4. Liste des notes détaillée et moyennes
 try {
-    // On récupère d'abord les cours auxquels l'étudiant est inscrit
+    // On affiche tous les cours où l'étudiant est inscrit (auto via config.php) OR a une note
     $stmtCourses = $pdo->prepare("
-        SELECT c.id, c.nom_cours, c.coefficient, ue.code_ue 
-        FROM inscriptions_cours ic 
-        JOIN cours c ON ic.cours_id = c.id 
+        SELECT DISTINCT c.id, c.nom_cours, c.coefficient, ue.code_ue 
+        FROM cours c
         JOIN unites_enseignement ue ON c.ue_id = ue.id 
-        WHERE ic.etudiant_id = ? 
+        LEFT JOIN inscriptions_cours ic ON c.id = ic.cours_id AND ic.etudiant_id = ?
+        LEFT JOIN notes n ON c.id = n.cours_id AND n.etudiant_id = ?
+        WHERE ic.etudiant_id IS NOT NULL OR n.id IS NOT NULL
         ORDER BY ue.code_ue ASC, c.nom_cours ASC
     ");
-    $stmtCourses->execute([$etudiant_id]);
+    $stmtCourses->execute([$etudiant_id, $etudiant_id]);
     $my_courses = $stmtCourses->fetchAll();
 
     $bulletin_detail = [];

@@ -181,13 +181,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // G. Création de Cours (Correction : ajout de ue_id)
+    // G. Création de Cours (Correction : ajout de ue_id et promotion_id)
     if (isset($_POST['creer_cours'])) {
         $active_tab = "courses_schedule";
         $nom_cours = trim($_POST['nom_cours']);
         $ue_id = intval($_POST['ue_id']);
+        $promotion_id = intval($_POST['promotion_id']);
         try {
-            $pdo->prepare("INSERT INTO cours (nom_cours, ue_id) VALUES (?, ?)")->execute([$nom_cours, $ue_id]);
+            $pdo->prepare("INSERT INTO cours (nom_cours, ue_id, promotion_id) VALUES (?, ?, ?)")->execute([$nom_cours, $ue_id, $promotion_id]);
             $msg_status = "<div class='alert success'>✅ Cours créé avec succès !</div>";
         } catch (PDOException $e) {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
@@ -303,34 +304,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
-
-    // K. Suppression d'un cours
-    if (isset($_POST['supprimer_cours'])) {
-        $active_tab = "courses_schedule";
-        $cours_id = intval($_POST['cours_id']);
-        try {
-            $pdo->beginTransaction();
-            $pdo->prepare("DELETE FROM notes WHERE cours_id = ?")->execute([$cours_id]);
-            $pdo->prepare("DELETE FROM inscriptions_cours WHERE cours_id = ?")->execute([$cours_id]);
-            
-            // Delete presences for sessions of this course
-            $sessions = $pdo->prepare("SELECT id FROM sessions_cours WHERE cours_id = ?");
-            $sessions->execute([$cours_id]);
-            $session_ids = $sessions->fetchAll(PDO::FETCH_COLUMN);
-            if (!empty($session_ids)) {
-                $inQuery = implode(',', array_fill(0, count($session_ids), '?'));
-                $pdo->prepare("DELETE FROM presences WHERE session_cours_id IN ($inQuery)")->execute($session_ids);
-            }
-            
-            $pdo->prepare("DELETE FROM sessions_cours WHERE cours_id = ?")->execute([$cours_id]);
-            $pdo->prepare("DELETE FROM cours WHERE id = ?")->execute([$cours_id]);
-            $pdo->commit();
-            $msg_status = "<div class='alert success'>🗑️ Cours supprimé !</div>";
-        } catch (PDOException $e) {
-            if ($pdo->inTransaction()) { $pdo->rollBack(); }
-            $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
-        }
-    }
 }
 try {
     $list_promotions = $pdo->query("SELECT id, nom_promotion, annee_academique FROM promotions ORDER BY nom_promotion ASC")->fetchAll();
@@ -441,6 +414,18 @@ try {
         .day-slot { min-height: 80px; border: 1px solid #E2E8F0; padding: 5px; background: white; }
         .session-item { background: #EBF8FF; border-left: 3px solid #3182CE; margin-bottom: 5px; padding: 5px; font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; }
         .session-time { font-weight: bold; color: #2B6CB0; display: block; margin-bottom: 2px; }
+
+        /* NOUVEAUX STYLES POUR LA RECHERCHE ET LES FICHES DÉTAILLÉES */
+        .search-container { display: flex; gap: 10px; margin-bottom: 20px; }
+        .search-container input { flex: 2; margin-bottom: 0; }
+        .search-container select { flex: 1; margin-bottom: 0; }
+        .btn-view { background: #3182CE; color: white; padding: 6px 10px; border-radius: 4px; font-size: 0.8em; border: none; cursor: pointer; }
+        .modal-large { width: 80% !important; max-width: 1000px; max-height: 90vh; overflow-y: auto; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        .info-card { background: #F8FAFC; padding: 15px; border-radius: 6px; border: 1px solid #E2E8F0; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: bold; }
+        .badge-present { background: #C6F6D5; color: #22543D; }
+        .badge-absent { background: #FED7D7; color: #742A2A; }
     </style>
 </head>
 <body>
@@ -482,16 +467,28 @@ try {
     <!-- ETUDIANTS -->
     <div id="tab-students" class="tab-content">
         <div class="card">
-            <h3>Liste des Étudiants</h3>
-            <table>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h3 style="margin:0;">Liste des Étudiants</h3>
+                <div class="search-container" style="margin:0; width:60%;">
+                    <input type="text" id="searchStudent" placeholder="🔍 Rechercher un nom ou prénom..." onkeyup="filterUsers('student')">
+                    <select id="filterPromo" onchange="filterUsers('student')">
+                        <option value="">Toutes les promotions</option>
+                        <?php foreach($list_promotions as $p): ?>
+                            <option value="<?php echo htmlspecialchars($p['nom_promotion']); ?>"><?php echo htmlspecialchars($p['nom_promotion']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+            <table id="tableStudents">
                 <thead><tr><th>Nom & Prénom</th><th>Promotion</th><th>Classe</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php foreach($students as $s): ?>
-                    <tr>
+                    <tr data-name="<?php echo htmlspecialchars(strtolower($s['nom'].' '.$s['prenom'])); ?>" data-promo="<?php echo htmlspecialchars($s['promo_nom']); ?>">
                         <td><strong><?php echo htmlspecialchars($s['nom'].' '.$s['prenom']); ?></strong><br><small><?php echo $s['email']; ?></small></td>
                         <td><?php echo $s['promo_nom']; ?></td>
                         <td><?php echo $s['groupe_nom'] ?? 'N/A'; ?></td>
                         <td>
+                            <button class="btn-view" onclick="viewUserProfile(<?php echo $s['id']; ?>)" title="Voir la fiche détaillée"><i class="fa-solid fa-file-invoice"></i> Fiche</button>
                             <button class="btn-edit" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($s)); ?>)"><i class="fa-solid fa-pen"></i></button>
                             <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer ?');">
                                 <input type="hidden" name="user_id" value="<?php echo $s['id']; ?>">
@@ -508,15 +505,21 @@ try {
     <!-- ENSEIGNANTS -->
     <div id="tab-teachers" class="tab-content">
         <div class="card">
-            <h3>Liste des Enseignants</h3>
-            <table>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h3 style="margin:0;">Liste des Enseignants</h3>
+                <div class="search-container" style="margin:0; width:40%;">
+                    <input type="text" id="searchTeacher" placeholder="🔍 Rechercher un nom..." onkeyup="filterUsers('teacher')">
+                </div>
+            </div>
+            <table id="tableTeachers">
                 <thead><tr><th>Nom & Prénom</th><th>Email</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php foreach($teachers_list as $t): ?>
-                    <tr>
+                    <tr data-name="<?php echo htmlspecialchars(strtolower($t['nom'].' '.$t['prenom'])); ?>">
                         <td><strong><?php echo htmlspecialchars($t['nom'].' '.$t['prenom']); ?></strong></td>
                         <td><?php echo $t['email']; ?></td>
                         <td>
+                            <button class="btn-view" onclick="viewUserProfile(<?php echo $t['id']; ?>)" title="Voir la fiche détaillée"><i class="fa-solid fa-file-invoice"></i> Fiche</button>
                             <button class="btn-edit" onclick="openEditTeacherModal(<?php echo htmlspecialchars(json_encode($t)); ?>)"><i class="fa-solid fa-pen"></i></button>
                             <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer ?');">
                                 <input type="hidden" name="user_id" value="<?php echo $t['id']; ?>">
@@ -538,6 +541,12 @@ try {
                     <h4>Créer un Cours</h4>
                     <form method="POST">
                         <input type="text" name="nom_cours" required placeholder="Nom du cours">
+                        <select name="promotion_id" required>
+                            <option value="">-- Promotion Cible --</option>
+                            <?php foreach($list_promotions as $promo): ?>
+                                <option value="<?php echo $promo['id']; ?>"><?php echo htmlspecialchars($promo['nom_promotion']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
                         <select name="ue_id" required>
                             <option value="">-- Unité d'Enseignement (UE) --</option>
                             <?php foreach($list_ue as $ue): ?>
@@ -830,7 +839,131 @@ try {
     </div>
 </div>
 
+<!-- MODAL FICHE DÉTAILLÉE (NOUVEAU) -->
+<div id="userProfileModal" class="modal">
+    <div class="modal-content modal-large">
+        <div class="modal-header">
+            <h3 id="profileTitle">Fiche Utilisateur</h3>
+            <span class="close-modal" onclick="closeUserProfileModal()">&times;</span>
+        </div>
+        <div id="profileBody">
+            <!-- Rempli par AJAX -->
+            <p style="text-align:center; padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Chargement des données...</p>
+        </div>
+    </div>
+</div>
+
 <script>
+    function filterUsers(type) {
+        let inputId = type === 'student' ? 'searchStudent' : 'searchTeacher';
+        let tableId = type === 'student' ? 'tableStudents' : 'tableTeachers';
+        let query = document.getElementById(inputId).value.toLowerCase();
+        let rows = document.querySelectorAll('#' + tableId + ' tbody tr');
+        let promoFilter = type === 'student' ? document.getElementById('filterPromo').value : '';
+
+        rows.forEach(row => {
+            let name = row.getAttribute('data-name');
+            let promo = row.getAttribute('data-promo');
+            let matchSearch = name.includes(query);
+            let matchPromo = promoFilter === '' || promo === promoFilter;
+            
+            row.style.display = (matchSearch && matchPromo) ? '' : 'none';
+        });
+    }
+
+    function viewUserProfile(userId) {
+        let modal = document.getElementById('userProfileModal');
+        let body = document.getElementById('profileBody');
+        modal.style.display = 'block';
+        body.innerHTML = '<p style="text-align:center; padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Chargement...</p>';
+
+        console.log("Fetching details for user:", userId);
+        // On appelle le nouveau fichier dédié pour éviter toute corruption JSON
+        fetch('get_user_details.php?user_id=' + userId)
+            .then(response => {
+                console.log("Response status:", response.status);
+                if (!response.ok) throw new Error('Erreur HTTP ' + response.status);
+                return response.text(); 
+            })
+            .then(text => {
+                console.log("Raw response:", text);
+                try {
+                    let data = JSON.parse(text);
+                    if (data.error) {
+                        body.innerHTML = '<div class="alert error">Erreur : ' + data.error + '</div>';
+                        return;
+                    }
+                    let html = `
+                        <div class="detail-grid">
+                            <div class="info-card">
+                                <h4><i class="fa-solid fa-user"></i> Informations</h4>
+                                <p><strong>Nom :</strong> ${data.user.nom} ${data.user.prenom}</p>
+                                <p><strong>Email :</strong> ${data.user.email}</p>
+                                <p><strong>Rôle :</strong> ${data.user.role.toUpperCase()}</p>
+                                ${data.user.role === 'etudiant' ? `
+                                    <p><strong>Promotion :</strong> ${data.details ? data.details.nom_promotion : 'N/A'}</p>
+                                    <p><strong>Groupe :</strong> ${data.details ? data.details.groupe_nom : 'N/A'}</p>
+                                    <p><strong>Statut :</strong> ${data.details ? data.details.statut_parcours : 'N/A'}</p>
+                                ` : ''}
+                            </div>
+                            <div>
+                                ${data.user.role === 'etudiant' ? renderStudentDetails(data) : renderTeacherDetails(data)}
+                            </div>
+                        </div>
+                    `;
+                    body.innerHTML = html;
+                    document.getElementById('profileTitle').innerText = 'Fiche ' + (data.user.role === 'etudiant' ? 'Étudiant' : 'Enseignant') + ' : ' + data.user.nom + ' ' + data.user.prenom;
+                } catch (e) {
+                    console.error("JSON Parse Error:", e);
+                    body.innerHTML = '<div class="alert error">Erreur de format de données. Raw: ' + text.substring(0, 100) + '</div>';
+                }
+            })
+            .catch(err => {
+                console.error("Fetch Error:", err);
+                body.innerHTML = '<div class="alert error">Erreur lors du chargement : ' + err.message + '</div>';
+            });
+    }
+
+    function renderStudentDetails(data) {
+        let notesHtml = '<h4><i class="fa-solid fa-graduation-cap"></i> Dernières Notes</h4>';
+        if (data.notes.length === 0) notesHtml += '<p>Aucune note enregistrée.</p>';
+        else {
+            notesHtml += '<table><thead><tr><th>Matière</th><th>Note</th><th>Type</th><th>Date</th></tr></thead><tbody>';
+            data.notes.forEach(n => {
+                notesHtml += `<tr><td>${n.nom_cours}</td><td><strong>${n.note_valeur}/20</strong></td><td>${n.type_evaluation}</td><td>${n.date_saisie}</td></tr>`;
+            });
+            notesHtml += '</tbody></table>';
+        }
+
+        let absHtml = '<h4><i class="fa-solid fa-clock"></i> Absences & Retards</h4>';
+        if (data.absences.length === 0) absHtml += '<p>Aucun incident de présence.</p>';
+        else {
+            absHtml += '<table><thead><tr><th>Date</th><th>Cours</th><th>Statut</th></tr></thead><tbody>';
+            data.absences.forEach(a => {
+                let badge = a.statut_presence === 'retard' ? 'badge-present' : 'badge-absent';
+                absHtml += `<tr><td>${a.date_cours}</td><td>${a.nom_cours}</td><td><span class="badge ${badge}">${a.statut_presence}</span></td></tr>`;
+            });
+            absHtml += '</tbody></table>';
+        }
+
+        return notesHtml + '<br>' + absHtml;
+    }
+
+    function renderTeacherDetails(data) {
+        let coursHtml = '<h4><i class="fa-solid fa-book"></i> Cours Assurés</h4>';
+        if (data.cours.length === 0) coursHtml += '<p>Aucun cours assigné.</p>';
+        else {
+            coursHtml += '<ul>';
+            data.cours.forEach(c => {
+                coursHtml += `<li><strong>${c.nom_cours}</strong> (${c.nom_promotion})</li>`;
+            });
+            coursHtml += '</ul>';
+        }
+        return coursHtml;
+    }
+
+    function closeUserProfileModal() { document.getElementById('userProfileModal').style.display = 'none'; }
+
     function switchTab(name) {
         document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
         document.querySelectorAll('.sidebar-menu li a').forEach(b => b.classList.remove('active'));
