@@ -304,6 +304,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
+
+// K. Validation de l'année d'un étudiant
+    if (isset($_POST['valider_annee_etudiant'])) {
+        $active_tab = "validation_annee";
+        $id_user = intval($_POST['user_id']);
+
+        try {
+            $stmt = $pdo->prepare("SELECT e.utilisateur_id, e.promotion_id, p.nom_promotion, p.annee_academique, p.majeure_id
+                                   FROM etudiants e
+                                   JOIN promotions p ON e.promotion_id = p.id
+                                   WHERE e.utilisateur_id = ?");
+            $stmt->execute([$id_user]);
+            $student_promo = $stmt->fetch();
+
+            if (!$student_promo) {
+                $msg_status = "<div class='alert error'>❌ Étudiant introuvable.</div>";
+            } elseif ($student_promo['nom_promotion'] === 'ING5') {
+                $msg_status = "<div class='alert error'>⚠️ L'étudiant est déjà en ING5, il ne peut pas passer dans une année supérieure.</div>";
+            } else {
+                $ordre = ['ING1' => 'ING2', 'ING2' => 'ING3', 'ING3' => 'ING4', 'ING4' => 'ING5'];
+                $next_promo_name = $ordre[$student_promo['nom_promotion']];
+
+                $checkNext = $pdo->prepare("SELECT id FROM promotions WHERE nom_promotion = ? AND annee_academique = ? LIMIT 1");
+                $checkNext->execute([$next_promo_name, $student_promo['annee_academique']]);
+                $next_promo_id = $checkNext->fetchColumn();
+
+                if (!$next_promo_id) {
+                    $createPromo = $pdo->prepare("INSERT INTO promotions (nom_promotion, annee_academique, majeure_id) VALUES (?, ?, ?)");
+                    $createPromo->execute([$next_promo_name, $student_promo['annee_academique'], $student_promo['majeure_id']]);
+                    $next_promo_id = $pdo->lastInsertId();
+                }
+
+                // On remet groupe_td_id à NULL car les groupes TD dépendent de la promotion.
+                $update = $pdo->prepare("UPDATE etudiants SET promotion_id = ?, groupe_td_id = NULL WHERE utilisateur_id = ?");
+                $update->execute([$next_promo_id, $id_user]);
+                $msg_status = "<div class='alert success'>✅ Année validée : l'étudiant passe en " . htmlspecialchars($next_promo_name) . ". Pensez à lui réattribuer un groupe TD.</div>";
+            }
+        } catch (PDOException $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
+        }
+    }
+
+    // L. Validation automatique des étudiants avec moyenne >= 10
+    if (isset($_POST['valider_annee_auto'])) {
+        $active_tab = "validation_annee";
+        try {
+            $studentsToValidate = $pdo->query("SELECT e.utilisateur_id, p.nom_promotion, p.annee_academique, p.majeure_id, AVG(n.note_valeur) AS moyenne
+                                                FROM etudiants e
+                                                JOIN promotions p ON e.promotion_id = p.id
+                                                JOIN notes n ON n.etudiant_id = e.utilisateur_id
+                                                WHERE p.nom_promotion != 'ING5'
+                                                GROUP BY e.utilisateur_id, p.nom_promotion, p.annee_academique, p.majeure_id
+                                                HAVING moyenne >= 10")->fetchAll();
+
+            $ordre = ['ING1' => 'ING2', 'ING2' => 'ING3', 'ING3' => 'ING4', 'ING4' => 'ING5'];
+            $nb_valides = 0;
+            $pdo->beginTransaction();
+            foreach ($studentsToValidate as $st) {
+                $next_promo_name = $ordre[$st['nom_promotion']];
+                $checkNext = $pdo->prepare("SELECT id FROM promotions WHERE nom_promotion = ? AND annee_academique = ? LIMIT 1");
+                $checkNext->execute([$next_promo_name, $st['annee_academique']]);
+                $next_promo_id = $checkNext->fetchColumn();
+
+                if (!$next_promo_id) {
+                    $createPromo = $pdo->prepare("INSERT INTO promotions (nom_promotion, annee_academique, majeure_id) VALUES (?, ?, ?)");
+                    $createPromo->execute([$next_promo_name, $st['annee_academique'], $st['majeure_id']]);
+                    $next_promo_id = $pdo->lastInsertId();
+                }
+
+                $update = $pdo->prepare("UPDATE etudiants SET promotion_id = ?, groupe_td_id = NULL WHERE utilisateur_id = ?");
+                $update->execute([$next_promo_id, $st['utilisateur_id']]);
+                $nb_valides++;
+            }
+            $pdo->commit();
+            $msg_status = "<div class='alert success'>✅ Validation automatique terminée : " . $nb_valides . " étudiant(s) passé(s) à l'année supérieure.</div>";
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
+        }
+    }
 }
 try {
     $list_promotions = $pdo->query("SELECT id, nom_promotion, annee_academique FROM promotions ORDER BY nom_promotion ASC")->fetchAll();
@@ -326,6 +406,18 @@ try {
     
     $students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.id AS promo_id, p.nom_promotion AS promo_nom, g.id AS groupe_id, g.nom AS groupe_nom, e.statut_parcours FROM utilisateurs u LEFT JOIN etudiants e ON u.id = e.utilisateur_id LEFT JOIN promotions p ON e.promotion_id = p.id LEFT JOIN groupes_td g ON e.groupe_td_id = g.id WHERE u.role = 'etudiant' ORDER BY u.nom ASC")->fetchAll();
     $teachers_list = $pdo->query("SELECT id, nom, prenom, email FROM utilisateurs WHERE role = 'enseignant' ORDER BY nom ASC")->fetchAll();
+
+    $validation_students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.nom_promotion, p.annee_academique, g.nom AS groupe_nom,
+                                               ROUND(AVG(n.note_valeur), 2) AS moyenne,
+                                               COUNT(n.id) AS nb_notes
+                                        FROM utilisateurs u
+                                        JOIN etudiants e ON u.id = e.utilisateur_id
+                                        JOIN promotions p ON e.promotion_id = p.id
+                                        LEFT JOIN groupes_td g ON e.groupe_td_id = g.id
+                                        LEFT JOIN notes n ON n.etudiant_id = u.id
+                                        WHERE u.role = 'etudiant'
+                                        GROUP BY u.id, u.nom, u.prenom, u.email, p.nom_promotion, p.annee_academique, g.nom
+                                        ORDER BY p.nom_promotion ASC, u.nom ASC")->fetchAll();
     
     $count_std = $pdo->query("SELECT COUNT(*) FROM utilisateurs WHERE role = 'etudiant'")->fetchColumn();
     $count_prf = $pdo->query("SELECT COUNT(*) FROM utilisateurs WHERE role = 'enseignant'")->fetchColumn();
@@ -437,6 +529,7 @@ try {
         <li><a id="btn-students" onclick="switchTab('students')"><i class="fa-solid fa-user-graduate"></i> Étudiants</a></li>
         <li><a id="btn-teachers" onclick="switchTab('teachers')"><i class="fa-solid fa-chalkboard-user"></i> Enseignants</a></li>
         <li><a id="btn-courses_schedule" onclick="switchTab('courses_schedule')"><i class="fa-solid fa-book-open"></i> Cours & Planning</a></li>
+        <li><a id="btn-validation_annee" onclick="switchTab('validation_annee')"><i class="fa-solid fa-circle-check"></i> Valider l'année</a></li>
         <li><a id="btn-inscription" onclick="switchTab('inscription')"><i class="fa-solid fa-user-plus"></i> Inscrire Étudiant</a></li>
         <li><a id="btn-inscription_prof" onclick="switchTab('inscription_prof')"><i class="fa-solid fa-chalkboard-user"></i> Inscrire Prof</a></li>
         <li><a href="deconnexion.php" style="color:#FEB2B2; margin-top:20px;"><i class="fa-solid fa-power-off"></i> Déconnexion</a></li>
@@ -703,6 +796,52 @@ try {
                                     onclick="openEditSessionModal(JSON.parse(this.getAttribute('data-json')))">
                                 <i class="fa-solid fa-pen-to-square"></i> Gérer
                             </button>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- VALIDATION ANNEE -->
+    <div id="tab-validation_annee" class="tab-content">
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:20px;">
+                <div>
+                    <h3 style="margin:0;"><i class="fa-solid fa-circle-check"></i> Validation de l'année</h3>
+                    <p style="margin:8px 0 0 0; color:#4A5568;">L'admin peut faire passer un étudiant à l'année supérieure. La moyenne est calculée avec les notes enregistrées.</p>
+                </div>
+                <form method="POST" onsubmit="return confirm('Valider automatiquement tous les étudiants avec une moyenne >= 10 ?');" style="min-width:260px; margin:0;">
+                    <button type="submit" name="valider_annee_auto">Valider automatiquement moyenne ≥ 10</button>
+                </form>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>Étudiant</th><th>Promotion actuelle</th><th>Groupe TD</th><th>Moyenne</th><th>Décision</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach($validation_students as $vs): ?>
+                    <tr>
+                        <td><strong><?php echo htmlspecialchars($vs['nom'].' '.$vs['prenom']); ?></strong><br><small><?php echo htmlspecialchars($vs['email']); ?></small></td>
+                        <td><?php echo htmlspecialchars($vs['nom_promotion'].' - '.$vs['annee_academique']); ?></td>
+                        <td><?php echo htmlspecialchars($vs['groupe_nom'] ?? 'À attribuer'); ?></td>
+                        <td>
+                            <?php if ($vs['nb_notes'] > 0): ?>
+                                <strong><?php echo htmlspecialchars($vs['moyenne']); ?>/20</strong>
+                            <?php else: ?>
+                                <span style="color:#718096;">Aucune note</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($vs['nom_promotion'] !== 'ING5'): ?>
+                                <form method="POST" onsubmit="return confirm('Valider l’année de cet étudiant ? Il passera à l’année supérieure.');" style="display:inline;">
+                                    <input type="hidden" name="user_id" value="<?php echo $vs['id']; ?>">
+                                    <button type="submit" name="valider_annee_etudiant" class="btn-view" style="width:auto; margin:0;">Valider l'année</button>
+                                </form>
+                            <?php else: ?>
+                                <span class="badge badge-present">Cycle terminé</span>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endforeach; ?>
