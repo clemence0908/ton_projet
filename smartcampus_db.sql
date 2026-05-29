@@ -240,6 +240,27 @@ INSERT INTO `salles` (`id`, `nom_salle`, `type_salle`, `capacite_max`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Structure de la table `rendez_vous`
+--
+
+CREATE TABLE `rendez_vous` (
+  `id` int(11) NOT NULL,
+  `etudiant_id` int(11) NOT NULL,
+  `enseignant_id` int(11) NOT NULL,
+  `sujet` varchar(150) NOT NULL,
+  `message` text,
+  `date_rdv` date NOT NULL,
+  `heure_debut` time NOT NULL,
+  `heure_fin` time NOT NULL,
+  `statut` enum('en_attente','accepte','refuse','annule') NOT NULL DEFAULT 'en_attente',
+  `reponse_enseignant` text,
+  `date_demande` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `date_reponse` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+
+-- --------------------------------------------------------
+
+--
 -- Structure de la table `sessions_cours`
 --
 
@@ -385,6 +406,14 @@ ALTER TABLE `presences`
   ADD KEY `etudiant_id` (`etudiant_id`);
 
 --
+-- Index pour la table `rendez_vous`
+--
+ALTER TABLE `rendez_vous`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `etudiant_id` (`etudiant_id`),
+  ADD KEY `enseignant_id` (`enseignant_id`);
+
+--
 -- Index pour la table `promotions`
 --
 ALTER TABLE `promotions`
@@ -479,6 +508,12 @@ ALTER TABLE `presences`
 --
 ALTER TABLE `promotions`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
+-- AUTO_INCREMENT pour la table `rendez_vous`
+--
+ALTER TABLE `rendez_vous`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `salles`
