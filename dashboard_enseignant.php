@@ -13,6 +13,28 @@ try {
     $pdo->exec("ALTER TABLE notes ADD COLUMN nom_examen VARCHAR(100) AFTER type_evaluation");
 } catch (Exception $e) { /* Colonne probablement déjà présente */ }
 
+// --- AUTO-MIGRATION : TABLE DES RENDEZ-VOUS ÉTUDIANT / ENSEIGNANT ---
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS rendez_vous (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        etudiant_id INT NOT NULL,
+        enseignant_id INT NOT NULL,
+        sujet VARCHAR(150) NOT NULL,
+        message TEXT NULL,
+        date_rdv DATE NOT NULL,
+        heure_debut TIME NOT NULL,
+        heure_fin TIME NOT NULL,
+        statut ENUM('en_attente','accepte','refuse','annule') NOT NULL DEFAULT 'en_attente',
+        reponse_enseignant TEXT NULL,
+        date_demande TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        date_reponse TIMESTAMP NULL DEFAULT NULL,
+        INDEX idx_rdv_etudiant (etudiant_id),
+        INDEX idx_rdv_enseignant (enseignant_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Exception $e) {
+    $msg_status = "<div class='alert error'>⚠️ Erreur création table RDV : " . htmlspecialchars($e->getMessage()) . "</div>";
+}
+
 $msg_status = "";
 $active_tab = "dashboard";
 
@@ -148,6 +170,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } catch (Exception $e) {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
+        }
+    }
+    
+    // Acceptation d'une demande de rendez-vous
+    if (isset($_POST['action_accepter_rdv'])) {
+        $active_tab = "rdv";
+        $rdv_id = intval($_POST['rdv_id']);
+        $reponse = trim($_POST['reponse_enseignant'] ?? '');
+        try {
+            $stmt = $pdo->prepare("UPDATE rendez_vous SET statut = 'accepte', reponse_enseignant = ?, date_reponse = NOW() WHERE id = ? AND enseignant_id = ?");
+            $stmt->execute([$reponse, $rdv_id, $enseignant_id]);
+            $msg_status = "<div class='alert success'>✅ Rendez-vous accepté.</div>";
+        } catch (Exception $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur acceptation RDV : " . htmlspecialchars($e->getMessage()) . "</div>";
+        }
+    }
+
+    // Refus d'une demande de rendez-vous
+    if (isset($_POST['action_refuser_rdv'])) {
+        $active_tab = "rdv";
+        $rdv_id = intval($_POST['rdv_id']);
+        $reponse = trim($_POST['reponse_enseignant'] ?? '');
+        try {
+            $stmt = $pdo->prepare("UPDATE rendez_vous SET statut = 'refuse', reponse_enseignant = ?, date_reponse = NOW() WHERE id = ? AND enseignant_id = ?");
+            $stmt->execute([$reponse, $rdv_id, $enseignant_id]);
+            $msg_status = "<div class='alert success'>❌ Rendez-vous refusé.</div>";
+        } catch (Exception $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur refus RDV : " . htmlspecialchars($e->getMessage()) . "</div>";
         }
     }
 
@@ -313,6 +363,24 @@ $low_grades = $pdo->prepare("
 ");
 $low_grades->execute([$enseignant_id]);
 $low_grades = $low_grades->fetchAll();
+
+// --- DEMANDES DE RENDEZ-VOUS REÇUES ---
+try {
+    $stmtRdv = $pdo->prepare("
+        SELECT r.*, u.nom AS etu_nom, u.prenom AS etu_prenom, p.nom_promotion
+        FROM rendez_vous r
+        JOIN utilisateurs u ON r.etudiant_id = u.id
+        LEFT JOIN etudiants e ON u.id = e.utilisateur_id
+        LEFT JOIN promotions p ON e.promotion_id = p.id
+        WHERE r.enseignant_id = ?
+        ORDER BY FIELD(r.statut, 'en_attente', 'accepte', 'refuse', 'annule'), r.date_rdv ASC, r.heure_debut ASC
+    ");
+    $stmtRdv->execute([$enseignant_id]);
+    $demandes_rdv = $stmtRdv->fetchAll();
+} catch (Exception $e) {
+    $demandes_rdv = [];
+    $msg_status .= "<div class='alert error'>Erreur Rendez-vous : " . htmlspecialchars($e->getMessage()) . "</div>";
+}
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -364,6 +432,7 @@ $low_grades = $low_grades->fetchAll();
         <li><a id="btn-edt" onclick="switchTab('edt')"><i class="fa-solid fa-calendar-week"></i> Mon Emploi du Temps</a></li>
         <li><a id="btn-notes" onclick="switchTab('notes')"><i class="fa-solid fa-pen-to-square"></i> Saisie & Modification</a></li>
         <li><a id="btn-results" onclick="switchTab('results')"><i class="fa-solid fa-table-list"></i> Résultats de la Classe</a></li>
+        <li><a id="btn-rdv" onclick="switchTab('rdv')"><i class="fa-solid fa-handshake"></i> Rendez-vous étudiants</a></li>
         <li><a id="btn-messagerie" onclick="switchTab('messagerie')"><i class="fa-solid fa-envelope"></i> Contacter un élève</a></li>
         <li><a href="deconnexion.php" style="color:#FEB2B2;"><i class="fa-solid fa-power-off"></i> Déconnexion</a></li>
     </ul>
@@ -799,6 +868,58 @@ $low_grades = $low_grades->fetchAll();
             <?php endif; ?>
         </div>
     </div>
+        <div id="tab-rdv" class="tab-content">
+        <div class="card">
+            <h3><i class="fa-solid fa-handshake"></i> Demandes de rendez-vous des étudiants</h3>
+            <?php if(empty($demandes_rdv)): ?>
+                <p>Aucune demande de rendez-vous reçue.</p>
+            <?php else: ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Étudiant</th>
+                            <th>Date demandée</th>
+                            <th>Sujet</th>
+                            <th>Statut</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($demandes_rdv as $r): ?>
+                            <tr>
+                                <td>
+                                    <strong><?php echo htmlspecialchars($r['etu_nom'] . ' ' . $r['etu_prenom']); ?></strong><br>
+                                    <small><?php echo htmlspecialchars($r['nom_promotion'] ?? 'Promotion non définie'); ?></small>
+                                </td>
+                                <td><?php echo date('d/m/Y', strtotime($r['date_rdv'])); ?><br><small><?php echo substr($r['heure_debut'],0,5) . ' - ' . substr($r['heure_fin'],0,5); ?></small></td>
+                                <td>
+                                    <strong><?php echo htmlspecialchars($r['sujet']); ?></strong>
+                                    <?php if(!empty($r['message'])): ?><br><small><?php echo htmlspecialchars($r['message']); ?></small><?php endif; ?>
+                                    <?php if(!empty($r['reponse_enseignant'])): ?><br><em>Réponse : <?php echo htmlspecialchars($r['reponse_enseignant']); ?></em><?php endif; ?>
+                                </td>
+                                <td><span class="badge <?php echo htmlspecialchars($r['statut']); ?>"><?php echo str_replace('_', ' ', htmlspecialchars($r['statut'])); ?></span></td>
+                                <td>
+                                    <?php if($r['statut'] === 'en_attente'): ?>
+                                        <form method="POST" style="margin-bottom:8px;">
+                                            <input type="hidden" name="rdv_id" value="<?php echo $r['id']; ?>">
+                                            <textarea name="reponse_enseignant" rows="2" placeholder="Réponse facultative..." style="margin-bottom:6px;"></textarea>
+                                            <div style="display:flex; gap:6px;">
+                                                <button type="submit" name="action_accepter_rdv" style="background:#38A169; margin:0;">Accepter</button>
+                                                <button type="submit" name="action_refuser_rdv" style="background:#E53E3E; margin:0;">Refuser</button>
+                                            </div>
+                                        </form>
+                                    <?php else: ?>
+                                        <small>Déjà traité</small>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    </div>
+    
     <div id="tab-messagerie" class="tab-content">
         <div class="card">
             <h3><i class="fa-solid fa-envelope"></i> Contacter un étudiant</h3>
