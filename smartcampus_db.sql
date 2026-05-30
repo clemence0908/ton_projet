@@ -1,4 +1,3 @@
-
 -- phpMyAdmin SQL Dump
 -- version 5.1.2
 -- https://www.phpmyadmin.net/
@@ -75,7 +74,26 @@ CREATE TABLE `etudiants` (
 --
 
 INSERT INTO `etudiants` (`utilisateur_id`, `promotion_id`, `statut_parcours`, `score_toeic`, `groupe_td_id`) VALUES
-(3, 3, 'initial', 820, NULL);
+(4, 1, 'initial', 760, NULL),
+(5, 1, 'initial', 810, NULL),
+(6, 1, 'alternant', 790, NULL),
+(7, 1, 'initial', 720, NULL),
+(8, 2, 'initial', 850, NULL),
+(9, 2, 'alternant', 780, NULL),
+(10, 2, 'initial', 800, NULL),
+(11, 2, 'initial', 735, NULL),
+(12, 2, 'alternant', 820, NULL),
+(13, 3, 'initial', 770, NULL),
+(14, 3, 'initial', 815, NULL),
+(15, 3, 'alternant', 790, NULL),
+(16, 3, 'initial', 700, NULL),
+(17, 3, 'initial', 840, NULL),
+(18, 1, 'alternant', 795, NULL),
+(19, 1, 'initial', 760, NULL),
+(20, 2, 'initial', 830, NULL),
+(21, 2, 'alternant', 785, NULL),
+(22, 3, 'initial', 810, NULL),
+(23, 3, 'alternant', 750, NULL);
 
 -- --------------------------------------------------------
 
@@ -325,9 +343,49 @@ CREATE TABLE `utilisateurs` (
 --
 
 INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role`, `date_creation`) VALUES
-(1, 'direction.studies@ecole.fr', 'password123', 'Lemoine', 'Claire', 'admin', '2026-05-26 22:26:59'),
-(2, 'durand.prof@ecole.fr', 'password123', 'Durand', 'Pierre', 'enseignant', '2026-05-26 22:26:59'),
-(3, 'emma.martin@ecole.fr', 'password123', 'Martin', 'Emma', 'etudiant', '2026-05-26 22:26:59');
+
+-- Étudiants
+(1, 'emma.martin@ecole.fr', 'password123', 'Martin', 'Emma', 'etudiant', '2026-05-26 22:26:59'),
+(2, 'clemence.audebert@ecole.fr', 'password123', 'Audebert', 'Clemence', 'etudiant', '2026-05-26 22:26:59'),
+(3, 'tasnyme.tebib@ecole.fr', 'password123', 'Tebib', 'Tasnyme', 'etudiant', '2026-05-26 22:26:59'),
+(4, 'aloise.martin@ecole.fr', 'password123', 'Martin', 'Aloise', 'etudiant', '2026-05-26 22:26:59'),
+(4, 'lucas.bernard@ecole.fr', 'password123', 'Bernard', 'Lucas', 'etudiant', '2026-05-26 22:26:59'),
+(5, 'lea.moreau@ecole.fr', 'password123', 'Moreau', 'Léa', 'etudiant', '2026-05-26 22:26:59'),
+(6, 'hugo.petit@ecole.fr', 'password123', 'Petit', 'Hugo', 'etudiant', '2026-05-26 22:26:59'),
+(7, 'chloe.garcia@ecole.fr', 'password123', 'Garcia', 'Chloé', 'etudiant', '2026-05-26 22:26:59'),
+(8, 'nathan.roux@ecole.fr', 'password123', 'Roux', 'Nathan', 'etudiant', '2026-05-26 22:26:59'),
+(9, 'laure.leroy@ecole.fr', 'password123', 'Leroy', 'Laure', 'etudiant', '2026-05-26 22:26:59'),
+(10, 'enzo.david@ecole.fr', 'password123', 'David', 'Enzo', 'etudiant', '2026-05-26 22:26:59'),
+(11, 'jade.mouassi@ecole.fr', 'password123', 'Martin', 'Jade', 'etudiant', '2026-05-26 22:26:59'),
+(12, 'noah.dubois@ecole.fr', 'password123', 'Dubois', 'Noah', 'etudiant', '2026-05-26 22:26:59'),
+(13, 'alice.fournier@ecole.fr', 'password123', 'Fournier', 'Alice', 'etudiant', '2026-05-26 22:26:59'),
+(14, 'louis.morel@ecole.fr', 'password123', 'Morel', 'Louis', 'etudiant', '2026-05-26 22:26:59'),
+(15, 'ines.laurent@ecole.fr', 'password123', 'Laurent', 'Inès', 'etudiant','2026-05-26 22:26:59'),
+(16, 'adam.simon@ecole.fr', 'password123', 'Simon', 'Adam', 'etudiant', '2026-05-26 22:26:59'),
+(17, 'lina.michel@ecole.fr', 'password123', 'Michel', 'Lina', 'etudiant', '2026-05-26 22:26:59')),
+(18, 'ethan.lefevre@ecole.fr', 'password123', 'Lefevre', 'Ethan', 'etudiant', '2026-05-26 22:26:59'),
+(19, 'sarah.mercier@ecole.fr', 'password123', 'Mercier', 'Sarah', 'etudiant', '2026-05-26 22:26:59'),
+(20, 'paul.blanc@ecole.fr', 'password123', 'Blanc', 'Paul', 'etudiant', '2026-05-26 22:26:59')),
+(21, 'anna.guerin@ecole.fr', 'password123', 'Guerin', 'Anna', 'etudiant', '2026-05-26 22:26:59'),
+(22, 'leo.chevalier@ecole.fr', 'password123', 'Chevalier', 'Léo', 'etudiant', '2026-05-26 22:26:59'),
+(23, 'robin.desbois@ecole.fr', 'password123', 'Des Bois', 'Robin', 'etudiant', '2026-05-26 22:26:59'),
+(24, 'lucas.bernard@ecole.fr', 'password123', 'Bernard', 'Lucas', 'etudiant', '2026-05-26 22:26:59'),
+
+-- Enseignants
+(25, 'durand.prof@ecole.fr', 'password123', 'Durand', 'Pierre', 'enseignant', '2026-05-26 22:26:59'),
+(26, 'lambert.prof@ecole.fr', 'password123', 'Lambert', 'Sophie', 'enseignant', '2026-05-26 22:26:59' ),
+(27, 'girard.prof@ecole.fr', 'password123', 'Girard', 'Antoine', 'enseignant', '2026-05-26 22:26:59'),
+(28, 'andre.prof@ecole.fr', 'password123', 'Andre', 'Marie', 'enseignant', '2026-05-26 22:26:59'),
+(29, 'muller.prof@ecole.fr', 'password123', 'Muller', 'Thomas', 'enseignant', '2026-05-26 22:26:59'),
+(30, 'faure.prof@ecole.fr', 'password123', 'Faure', 'Camille', 'enseignant', '2026-05-26 22:26:59'),
+(31, 'perrin.prof@ecole.fr', 'password123', 'Perrin', 'Nicolas', 'enseignant', '2026-05-26 22:26:59'),
+(32, 'renard.prof@ecole.fr', 'password123', 'Renard', 'Claire', 'enseignant', '2026-05-26 22:26:59'),
+(33, 'durand.prof@ecole.fr', 'password123', 'Durand', 'Julien', 'enseignant', '2026-05-26 22:26:59'),
+
+-- Administrateurs
+(34, 'direction.studies@ecole.fr', 'password123', 'Lemoine', 'Claire', 'admin', '2026-05-26 22:26:59'),
+(35, 'admin1@ecole.fr', 'password123', 'Carreau', 'Julie', 'admin', '2026-05-26 22:26:59'),
+(36, 'admin2@ecole.fr', 'password123', 'Jones', 'Hervé', 'admin', '2026-05-26 22:26:59');
 
 --
 -- Index pour les tables déchargées
@@ -608,3 +666,7 @@ ALTER TABLE `sessions_cours`
   ADD CONSTRAINT `sessions_cours_ibfk_2` FOREIGN KEY (`enseignant_id`) REFERENCES `utilisateurs` (`id`),
   ADD CONSTRAINT `sessions_cours_ibfk_3` FOREIGN KEY (`salle_id`) REFERENCES `salles` (`id`);
 COMMIT;
+
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
