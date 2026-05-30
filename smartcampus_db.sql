@@ -1,3 +1,4 @@
+
 -- phpMyAdmin SQL Dump
 -- version 5.1.2
 -- https://www.phpmyadmin.net/
@@ -607,7 +608,3 @@ ALTER TABLE `sessions_cours`
   ADD CONSTRAINT `sessions_cours_ibfk_2` FOREIGN KEY (`enseignant_id`) REFERENCES `utilisateurs` (`id`),
   ADD CONSTRAINT `sessions_cours_ibfk_3` FOREIGN KEY (`salle_id`) REFERENCES `salles` (`id`);
 COMMIT;
-
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
