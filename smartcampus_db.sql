@@ -359,7 +359,7 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 (8, 'nathan.roux@ecole.fr', 'password123', 'Roux', 'Nathan', 'etudiant', '2026-05-26 22:26:59'),
 (9, 'laure.leroy@ecole.fr', 'password123', 'Leroy', 'Laure', 'etudiant', '2026-05-26 22:26:59'),
 (10, 'enzo.david@ecole.fr', 'password123', 'David', 'Enzo', 'etudiant', '2026-05-26 22:26:59'),
-(11, 'jade.mouassi@ecole.fr', 'password123', 'Martin', 'Jade', 'etudiant', '2026-05-26 22:26:59'),
+(11, 'jade.mouassi@ecole.fr', 'password123', 'Mouassi', 'Jade', 'etudiant', '2026-05-26 22:26:59'),
 (12, 'noah.dubois@ecole.fr', 'password123', 'Dubois', 'Noah', 'etudiant', '2026-05-26 22:26:59'),
 (13, 'alice.fournier@ecole.fr', 'password123', 'Fournier', 'Alice', 'etudiant', '2026-05-26 22:26:59'),
 (14, 'louis.morel@ecole.fr', 'password123', 'Morel', 'Louis', 'etudiant', '2026-05-26 22:26:59'),
