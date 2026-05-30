@@ -74,6 +74,9 @@ CREATE TABLE `etudiants` (
 --
 
 INSERT INTO `etudiants` (`utilisateur_id`, `promotion_id`, `statut_parcours`, `score_toeic`, `groupe_td_id`) VALUES
+(1, 3, 'initial', 820, NULL),
+(2, 1, 'initial', 760, NULL),
+(3, 3, 'initial', 820, NULL),
 (4, 1, 'initial', 760, NULL),
 (5, 1, 'initial', 810, NULL),
 (6, 1, 'alternant', 790, NULL),
@@ -93,7 +96,8 @@ INSERT INTO `etudiants` (`utilisateur_id`, `promotion_id`, `statut_parcours`, `s
 (20, 2, 'initial', 830, NULL),
 (21, 2, 'alternant', 785, NULL),
 (22, 3, 'initial', 810, NULL),
-(23, 3, 'alternant', 750, NULL);
+(23, 3, 'alternant', 750, NULL),
+(24, 1, 'initial', 790, NULL);
 
 -- --------------------------------------------------------
 
@@ -195,8 +199,8 @@ CREATE TABLE `notes` (
 --
 
 INSERT INTO `notes` (`id`, `etudiant_id`, `cours_id`, `enseignant_id`, `note_valeur`, `type_evaluation`, `statut_verrouillage`, `date_saisie`) VALUES
-(1, 3, 2, 2, '14.50', 'CC', 'valide_definitif', '2026-05-26 22:27:00'),
-(2, 3, 2, 2, '12.00', 'Examen', 'en_cours', '2026-05-26 22:27:00');
+(1, 3, 2, 25, '14.50', 'CC', 'valide_definitif', '2026-05-26 22:27:00'),
+(2, 3, 2, 25, '12.00', 'Examen', 'en_cours', '2026-05-26 22:27:00');
 
 -- --------------------------------------------------------
 
@@ -299,7 +303,7 @@ CREATE TABLE `sessions_cours` (
 --
 
 INSERT INTO `sessions_cours` (`id`, `cours_id`, `enseignant_id`, `salle_id`, `date_cours`, `heure_debut`, `heure_fin`, `groupe_td_id`) VALUES
-(1, 2, 2, 2, '2026-05-25', '08:30:00', '10:15:00', NULL);
+(1, 2, 25, 2, '2026-05-25', '08:30:00', '10:15:00', NULL);
 
 -- --------------------------------------------------------
 
@@ -349,7 +353,6 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 (2, 'clemence.audebert@ecole.fr', 'password123', 'Audebert', 'Clemence', 'etudiant', '2026-05-26 22:26:59'),
 (3, 'tasnyme.tebib@ecole.fr', 'password123', 'Tebib', 'Tasnyme', 'etudiant', '2026-05-26 22:26:59'),
 (4, 'aloise.martin@ecole.fr', 'password123', 'Martin', 'Aloise', 'etudiant', '2026-05-26 22:26:59'),
-(4, 'lucas.bernard@ecole.fr', 'password123', 'Bernard', 'Lucas', 'etudiant', '2026-05-26 22:26:59'),
 (5, 'lea.moreau@ecole.fr', 'password123', 'Moreau', 'Léa', 'etudiant', '2026-05-26 22:26:59'),
 (6, 'hugo.petit@ecole.fr', 'password123', 'Petit', 'Hugo', 'etudiant', '2026-05-26 22:26:59'),
 (7, 'chloe.garcia@ecole.fr', 'password123', 'Garcia', 'Chloé', 'etudiant', '2026-05-26 22:26:59'),
@@ -362,10 +365,10 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 (14, 'louis.morel@ecole.fr', 'password123', 'Morel', 'Louis', 'etudiant', '2026-05-26 22:26:59'),
 (15, 'ines.laurent@ecole.fr', 'password123', 'Laurent', 'Inès', 'etudiant','2026-05-26 22:26:59'),
 (16, 'adam.simon@ecole.fr', 'password123', 'Simon', 'Adam', 'etudiant', '2026-05-26 22:26:59'),
-(17, 'lina.michel@ecole.fr', 'password123', 'Michel', 'Lina', 'etudiant', '2026-05-26 22:26:59')),
+(17, 'lina.michel@ecole.fr', 'password123', 'Michel', 'Lina', 'etudiant', '2026-05-26 22:26:59'),
 (18, 'ethan.lefevre@ecole.fr', 'password123', 'Lefevre', 'Ethan', 'etudiant', '2026-05-26 22:26:59'),
 (19, 'sarah.mercier@ecole.fr', 'password123', 'Mercier', 'Sarah', 'etudiant', '2026-05-26 22:26:59'),
-(20, 'paul.blanc@ecole.fr', 'password123', 'Blanc', 'Paul', 'etudiant', '2026-05-26 22:26:59')),
+(20, 'paul.blanc@ecole.fr', 'password123', 'Blanc', 'Paul', 'etudiant', '2026-05-26 22:26:59'),
 (21, 'anna.guerin@ecole.fr', 'password123', 'Guerin', 'Anna', 'etudiant', '2026-05-26 22:26:59'),
 (22, 'leo.chevalier@ecole.fr', 'password123', 'Chevalier', 'Léo', 'etudiant', '2026-05-26 22:26:59'),
 (23, 'robin.desbois@ecole.fr', 'password123', 'Des Bois', 'Robin', 'etudiant', '2026-05-26 22:26:59'),
@@ -380,12 +383,11 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 (30, 'faure.prof@ecole.fr', 'password123', 'Faure', 'Camille', 'enseignant', '2026-05-26 22:26:59'),
 (31, 'perrin.prof@ecole.fr', 'password123', 'Perrin', 'Nicolas', 'enseignant', '2026-05-26 22:26:59'),
 (32, 'renard.prof@ecole.fr', 'password123', 'Renard', 'Claire', 'enseignant', '2026-05-26 22:26:59'),
-(33, 'durand.prof@ecole.fr', 'password123', 'Durand', 'Julien', 'enseignant', '2026-05-26 22:26:59'),
 
 -- Administrateurs
-(34, 'direction.studies@ecole.fr', 'password123', 'Lemoine', 'Claire', 'admin', '2026-05-26 22:26:59'),
-(35, 'admin1@ecole.fr', 'password123', 'Carreau', 'Julie', 'admin', '2026-05-26 22:26:59'),
-(36, 'admin2@ecole.fr', 'password123', 'Jones', 'Hervé', 'admin', '2026-05-26 22:26:59');
+(33, 'direction.studies@ecole.fr', 'password123', 'Lemoine', 'Claire', 'admin', '2026-05-26 22:26:59'),
+(34, 'admin1@ecole.fr', 'password123', 'Carreau', 'Julie', 'admin', '2026-05-26 22:26:59'),
+(35, 'admin2@ecole.fr', 'password123', 'Jones', 'Hervé', 'admin', '2026-05-26 22:26:59');
 
 --
 -- Index pour les tables déchargées
@@ -596,7 +598,7 @@ ALTER TABLE `unites_enseignement`
 -- AUTO_INCREMENT pour la table `utilisateurs`
 --
 ALTER TABLE `utilisateurs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=36;
 
 --
 -- Contraintes pour les tables déchargées
@@ -665,6 +667,13 @@ ALTER TABLE `sessions_cours`
   ADD CONSTRAINT `sessions_cours_ibfk_1` FOREIGN KEY (`cours_id`) REFERENCES `cours` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `sessions_cours_ibfk_2` FOREIGN KEY (`enseignant_id`) REFERENCES `utilisateurs` (`id`),
   ADD CONSTRAINT `sessions_cours_ibfk_3` FOREIGN KEY (`salle_id`) REFERENCES `salles` (`id`);
+
+--
+-- Contraintes pour la table `rendez_vous`
+--
+ALTER TABLE `rendez_vous`
+  ADD CONSTRAINT `rendez_vous_ibfk_1` FOREIGN KEY (`etudiant_id`) REFERENCES `etudiants` (`utilisateur_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `rendez_vous_ibfk_2` FOREIGN KEY (`enseignant_id`) REFERENCES `utilisateurs` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
