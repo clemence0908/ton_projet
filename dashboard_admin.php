@@ -258,66 +258,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // H. Planification Session (Amélioration : Détection des conflits)
+    // H. Planification Session par cours
+    // Une séance est liée à un cours + un professeur + une salle.
+    // Tous les étudiants inscrits à ce cours verront automatiquement la même séance.
     if (isset($_POST['planifier_session'])) {
         $active_tab = "courses_schedule";
         $cours_id = intval($_POST['cours_id']);
         $enseignant_id = intval($_POST['enseignant_id']);
         $salle_id = intval($_POST['salle_id']);
-        $cible = $_POST['cible_cours']; // Format : 'td_X' ou 'amphi_Y'
         $date_cours = $_POST['date_cours'];
         $heure_debut = $_POST['heure_debut'];
         $heure_fin = $_POST['heure_fin'];
 
-        if (strtotime($heure_debut) >= strtotime($heure_fin)) {
+        if ($cours_id <= 0 || $enseignant_id <= 0 || $salle_id <= 0 || empty($date_cours) || empty($heure_debut) || empty($heure_fin)) {
+            $msg_status = "<div class='alert error'>❌ Veuillez remplir tous les champs de la séance.</div>";
+        } elseif (strtotime($heure_debut) >= strtotime($heure_fin)) {
             $msg_status = "<div class='alert error'>❌ L'heure de fin doit être après l'heure de début.</div>";
         } else {
             try {
-                // --- 1. DÉTECTION DES CONFLITS ---
                 $conflit_msg = "";
-                
-                // A. Conflit Enseignant
+
+                // Conflit enseignant
                 $checkProf = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE enseignant_id = ? AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
                 $checkProf->execute([$enseignant_id, $date_cours, $heure_fin, $heure_debut]);
-                if ($checkProf->fetchColumn() > 0) $conflit_msg .= "L'enseignant est déjà occupé. ";
+                if ($checkProf->fetchColumn() > 0) {
+                    $conflit_msg .= "L'enseignant est déjà occupé. ";
+                }
 
-                // B. Conflit Salle
+                // Conflit salle
                 $checkSalle = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE salle_id = ? AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
                 $checkSalle->execute([$salle_id, $date_cours, $heure_fin, $heure_debut]);
-                if ($checkSalle->fetchColumn() > 0) $conflit_msg .= "La salle est déjà réservée. ";
-
-                // C. Conflit Classe (TD ou Amphi)
-                $tds_concernes = [];
-                if (strpos($cible, 'amphi_') === 0) {
-                    $amphi_id = intval(substr($cible, 6));
-                    $res = $pdo->query("SELECT id FROM groupes_td WHERE amphi_id = " . $amphi_id)->fetchAll();
-                    foreach($res as $r) $tds_concernes[] = $r['id'];
-                } else {
-                    $tds_concernes[] = intval(substr($cible, 3));
+                if ($checkSalle->fetchColumn() > 0) {
+                    $conflit_msg .= "La salle est déjà réservée. ";
                 }
 
-                if (!empty($tds_concernes)) {
-                    $placeholders = implode(',', array_fill(0, count($tds_concernes), '?'));
-                    $checkClasse = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE groupe_td_id IN ($placeholders) AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
-                    $params = array_merge($tds_concernes, [$date_cours, $heure_fin, $heure_debut]);
-                    $checkClasse->execute($params);
-                    if ($checkClasse->fetchColumn() > 0) $conflit_msg .= "La classe (ou une partie de l'amphi) a déjà cours. ";
+                // Conflit pour le même cours
+                $checkCours = $pdo->prepare("SELECT COUNT(*) FROM sessions_cours WHERE cours_id = ? AND date_cours = ? AND heure_debut < ? AND heure_fin > ?");
+                $checkCours->execute([$cours_id, $date_cours, $heure_fin, $heure_debut]);
+                if ($checkCours->fetchColumn() > 0) {
+                    $conflit_msg .= "Ce cours a déjà une séance sur ce créneau. ";
                 }
 
-                // --- 2. INSERTION SI AUCUN CONFLIT ---
                 if (!empty($conflit_msg)) {
                     $msg_status = "<div class='alert error'>⚠️ <strong>Conflit détecté :</strong> " . $conflit_msg . "</div>";
                 } else {
-                    $pdo->beginTransaction();
-                    $stmt = $pdo->prepare("INSERT INTO sessions_cours (cours_id, enseignant_id, salle_id, date_cours, heure_debut, heure_fin, groupe_td_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    foreach ($tds_concernes as $td_id) {
-                        $stmt->execute([$cours_id, $enseignant_id, $salle_id, $date_cours, $heure_debut, $heure_fin, $td_id]);
-                    }
-                    $pdo->commit();
-                    $msg_status = "<div class='alert success'>✅ Séance planifiée sans conflit !</div>";
+                    $stmt = $pdo->prepare("INSERT INTO sessions_cours (cours_id, enseignant_id, salle_id, date_cours, heure_debut, heure_fin, groupe_td_id) VALUES (?, ?, ?, ?, ?, ?, NULL)");
+                    $stmt->execute([$cours_id, $enseignant_id, $salle_id, $date_cours, $heure_debut, $heure_fin]);
+                    $msg_status = "<div class='alert success'>✅ Séance planifiée pour ce cours ! Les étudiants inscrits à ce cours la verront dans leur emploi du temps.</div>";
                 }
             } catch (PDOException $e) {
-                if ($pdo->inTransaction()) { $pdo->rollBack(); }
                 $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
             }
         }
@@ -498,22 +487,30 @@ try {
     $start_date = $monday->format('Y-m-d');
     $end_date = (clone $monday)->modify('+6 days')->format('Y-m-d');
 
-    // Emploi du temps de la semaine sélectionnée
-    $schedule_sessions = $pdo->prepare("SELECT s.*, c.nom_cours, u.nom AS prof_nom, u.prenom AS prof_prenom, sl.nom_salle, g.nom AS groupe_nom, p.nom_promotion 
-                                        FROM sessions_cours s 
-                                        JOIN cours c ON s.cours_id = c.id 
-                                        JOIN utilisateurs u ON s.enseignant_id = u.id 
-                                        JOIN salles sl ON s.salle_id = sl.id 
-                                        LEFT JOIN groupes_td g ON s.groupe_td_id = g.id 
-                                        LEFT JOIN amphis a ON g.amphi_id = a.id 
-                                        LEFT JOIN promotions p ON a.promotion_id = p.id 
-                                        WHERE s.date_cours >= ? AND s.date_cours <= ? 
+    // Emploi du temps par cours : même séance pour le professeur et pour tous les étudiants inscrits au cours
+    $schedule_sessions = $pdo->prepare("SELECT s.*, c.nom_cours, u.nom AS prof_nom, u.prenom AS prof_prenom, sl.nom_salle,
+                                               NULL AS groupe_nom,
+                                               'Étudiants inscrits au cours' AS nom_promotion,
+                                               (SELECT COUNT(*) FROM inscriptions_cours ic WHERE ic.cours_id = s.cours_id) AS nb_inscrits
+                                        FROM sessions_cours s
+                                        JOIN cours c ON s.cours_id = c.id
+                                        JOIN utilisateurs u ON s.enseignant_id = u.id
+                                        JOIN salles sl ON s.salle_id = sl.id
+                                        WHERE s.date_cours >= ? AND s.date_cours <= ?
                                         ORDER BY s.date_cours ASC, s.heure_debut ASC");
     $schedule_sessions->execute([$start_date, $end_date]);
     $schedule_sessions = $schedule_sessions->fetchAll();
 
     // Liste de toutes les séances pour la recherche
-    $all_sessions_list = $pdo->query("SELECT s.*, c.nom_cours, u.nom AS prof_nom, u.prenom AS prof_prenom, sl.nom_salle, g.nom AS groupe_nom, p.nom_promotion FROM sessions_cours s JOIN cours c ON s.cours_id = c.id JOIN utilisateurs u ON s.enseignant_id = u.id JOIN salles sl ON s.salle_id = sl.id LEFT JOIN groupes_td g ON s.groupe_td_id = g.id LEFT JOIN amphis a ON g.amphi_id = a.id LEFT JOIN promotions p ON a.promotion_id = p.id ORDER BY s.date_cours DESC, s.heure_debut DESC")->fetchAll();
+    $all_sessions_list = $pdo->query("SELECT s.*, c.nom_cours, u.nom AS prof_nom, u.prenom AS prof_prenom, sl.nom_salle,
+                                             NULL AS groupe_nom,
+                                             'Étudiants inscrits au cours' AS nom_promotion,
+                                             (SELECT COUNT(*) FROM inscriptions_cours ic WHERE ic.cours_id = s.cours_id) AS nb_inscrits
+                                      FROM sessions_cours s
+                                      JOIN cours c ON s.cours_id = c.id
+                                      JOIN utilisateurs u ON s.enseignant_id = u.id
+                                      JOIN salles sl ON s.salle_id = sl.id
+                                      ORDER BY s.date_cours DESC, s.heure_debut DESC")->fetchAll();
 
 } catch (PDOException $e) {
     $msg_status = "<div class='alert error'>Erreur : " . $e->getMessage() . "</div>";
@@ -637,7 +634,7 @@ try {
                 </div>
             </div>
             <table id="tableStudents">
-                <thead><tr><th>Nom & Prénom</th><th>Promotion</th><th>Classe</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Nom & Prénom</th><th>Promotion</th><th>Public</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php foreach($students as $s): ?>
                     <tr data-name="<?php echo htmlspecialchars(strtolower($s['nom'].' '.$s['prenom'])); ?>" data-promo="<?php echo htmlspecialchars($s['promo_nom']); ?>">
@@ -724,21 +721,10 @@ try {
                             <option value="">-- Enseignant --</option>
                             <?php foreach($teachers_list as $p): ?><option value="<?php echo $p['id']; ?>">M. <?php echo htmlspecialchars($p['nom'].' '.$p['prenom']); ?></option><?php endforeach; ?>
                         </select>
-                        <select name="cible_cours" required>
-                            <option value="">-- Classe concernée --</option>
-                            <optgroup label="Amphis (Cours Magistraux)">
-                                <?php 
-                                $amphis = $pdo->query("SELECT a.id, a.nom, p.nom_promotion FROM amphis a JOIN promotions p ON a.promotion_id = p.id")->fetchAll();
-                                foreach($amphis as $a): ?>
-                                    <option value="amphi_<?php echo $a['id']; ?>">Amphi : <?php echo htmlspecialchars($a['nom_promotion'] . ' - ' . $a['nom']); ?></option>
-                                <?php endforeach; ?>
-                            </optgroup>
-                            <optgroup label="Groupes TD (Travaux Dirigés)">
-                                <?php foreach($list_groupes as $g): ?>
-                                    <option value="td_<?php echo $g['id']; ?>">TD : <?php echo htmlspecialchars($g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom']); ?></option>
-                                <?php endforeach; ?>
-                            </optgroup>
-                        </select>
+                        <div style="background:#EDF2F7; padding:10px; border-radius:6px; font-size:0.9em; color:#2D3748;">
+                            <strong>Public :</strong><br>
+                            tous les étudiants inscrits au cours sélectionné verront cette séance.
+                        </div>
                         <select name="salle_id" required>
                             <option value="">-- Salle --</option>
                             <?php foreach($list_salles as $sl): ?><option value="<?php echo $sl['id']; ?>"><?php echo htmlspecialchars($sl['nom_salle'] . ' (' . $sl['type_salle'] . ')'); ?></option><?php endforeach; ?>
@@ -768,7 +754,7 @@ try {
                     <?php 
                     $filter_classes = []; $filter_profs = []; $filter_cours = [];
                     foreach($schedule_sessions as $s) {
-                        $c_name = $s['groupe_nom'] ? $s['nom_promotion'].' - '.$s['groupe_nom'] : 'Amphi '.$s['nom_promotion'];
+                        $c_name = 'Étudiants inscrits au cours';
                         $filter_classes[$c_name] = $c_name;
                         $filter_profs[$s['prof_nom'].' '.$s['prof_prenom']] = 'M. '.$s['prof_nom'].' '.$s['prof_prenom'];
                         $filter_cours[$s['nom_cours']] = $s['nom_cours'];
@@ -777,7 +763,7 @@ try {
                     ?>
                     <select id="scheduleFilter" onchange="applyScheduleFilter()" style="width: 280px; padding: 8px; border: 1px solid #CBD5E0; border-radius: 4px; margin:0; font-size:0.9em; background:white;">
                         <option value="ALL">-- Afficher tout le planning --</option>
-                        <optgroup label="Filtrer par Classe">
+                        <optgroup label="Filtrer par Public">
                             <?php foreach($filter_classes as $fc): ?><option value="CLASS_<?php echo htmlspecialchars($fc); ?>"><?php echo htmlspecialchars($fc); ?></option><?php endforeach; ?>
                         </optgroup>
                         <optgroup label="Filtrer par Enseignant">
@@ -815,7 +801,7 @@ try {
                                     elseif ($slot_hour == 17 && $hour >= 17) $is_in_slot = true;
 
                                     if(date('N', strtotime($sess['date_cours'])) == $day && $is_in_slot): 
-                                        $className = $sess['groupe_nom'] ? $sess['nom_promotion'].' - '.$sess['groupe_nom'] : 'Amphi '.$sess['nom_promotion'];
+                                        $className = 'Étudiants inscrits au cours';
                                         $profName = $sess['prof_nom'].' '.$sess['prof_prenom'];
                                     ?>
                                     <div class="session-item" style="cursor:pointer;" 
@@ -838,10 +824,10 @@ try {
 
         <div class="card" style="margin-top: 25px;">
             <h3><i class="fa-solid fa-list"></i> Liste de Toutes les Séances</h3>
-            <input type="text" id="searchSessionInput" placeholder="🔍 Rechercher une séance (Date, Matière, Classe, Professeur, Salle)..." onkeyup="filterSessions()" style="padding: 12px; width: 100%; box-sizing: border-box; font-size: 1em; border: 2px solid #E2E8F0; border-radius: 6px; margin-bottom: 15px;">
+            <input type="text" id="searchSessionInput" placeholder="🔍 Rechercher une séance (Date, Matière, Public, Professeur, Salle)..." onkeyup="filterSessions()" style="padding: 12px; width: 100%; box-sizing: border-box; font-size: 1em; border: 2px solid #E2E8F0; border-radius: 6px; margin-bottom: 15px;">
             <table id="sessionsTable">
                 <thead>
-                    <tr><th>Date & Horaires</th><th>Matière</th><th>Classe</th><th>Enseignant</th><th>Salle</th><th>Actions</th></tr>
+                    <tr><th>Date & Horaires</th><th>Matière</th><th>Public</th><th>Enseignant</th><th>Salle</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     <?php foreach($all_sessions_list as $sess): ?>
@@ -851,7 +837,7 @@ try {
                             <small><?php echo substr($sess['heure_debut'],0,5).' - '.substr($sess['heure_fin'],0,5); ?></small>
                         </td>
                         <td><strong><?php echo htmlspecialchars($sess['nom_cours']); ?></strong></td>
-                        <td><span style="color:#2B6CB0; font-weight:bold;"><?php echo htmlspecialchars($sess['groupe_nom'] ? $sess['nom_promotion'].' - '.$sess['groupe_nom'] : 'Amphi '.$sess['nom_promotion']); ?></span></td>
+                        <td><span style="color:#2B6CB0; font-weight:bold;"><?php echo htmlspecialchars('Étudiants inscrits au cours (' . intval($sess['nb_inscrits'] ?? 0) . ' inscrit(s))'); ?></span></td>
                         <td>M. <?php echo htmlspecialchars($sess['prof_nom'].' '.$sess['prof_prenom']); ?></td>
                         <td><span style="background:#E2E8F0; padding:4px 8px; border-radius:4px; font-size: 0.9em;"><?php echo htmlspecialchars($sess['nom_salle']); ?></span></td>
                         <td style="width: 100px;">
@@ -1041,7 +1027,7 @@ try {
             <label>Matière (Fixe)</label>
             <input type="text" id="edit_sess_cours" readonly style="background:#f0f0f0;">
             
-            <label>Classe (Fixe)</label>
+            <label>Public</label>
             <input type="text" id="edit_sess_classe" readonly style="background:#f0f0f0;">
 
             <label>Enseignant</label>
@@ -1239,7 +1225,7 @@ try {
     function openEditSessionModal(sess) {
         document.getElementById('edit_sess_id').value = sess.id;
         document.getElementById('edit_sess_cours').value = sess.nom_cours;
-        document.getElementById('edit_sess_classe').value = sess.groupe_nom ? (sess.nom_promotion + ' - ' + sess.groupe_nom) : 'Amphi Complet (' + sess.nom_promotion + ')';
+        document.getElementById('edit_sess_classe').value = 'Étudiants inscrits au cours';
         document.getElementById('edit_sess_prof').value = sess.enseignant_id;
         document.getElementById('edit_sess_salle').value = sess.salle_id;
         document.getElementById('edit_sess_date').value = sess.date_cours;
