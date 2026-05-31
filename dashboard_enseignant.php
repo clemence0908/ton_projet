@@ -31,9 +31,19 @@ try {
         INDEX idx_rdv_etudiant (etudiant_id),
         INDEX idx_rdv_enseignant (enseignant_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-} catch (Exception $e) {
-    $msg_status = "<div class='alert error'>⚠️ Erreur création table RDV : " . htmlspecialchars($e->getMessage()) . "</div>";
-}
+} catch (Exception $e) { /* Table probablement déjà présente */ }
+
+// --- AUTO-MIGRATION : TABLE DES PRÉSENCES ---
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS presences (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        session_cours_id INT NOT NULL,
+        etudiant_id INT NOT NULL,
+        statut_presence ENUM('present','absent_justifie','absent_injustifie') NOT NULL DEFAULT 'present',
+        date_marquage TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_presence (session_cours_id, etudiant_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Exception $e) { /* Table probablement déjà présente */ }
 
 $msg_status = "";
 $active_tab = "dashboard";
@@ -172,11 +182,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
-    
+
+
     // Acceptation d'une demande de rendez-vous
     if (isset($_POST['action_accepter_rdv'])) {
         $active_tab = "rdv";
-        $rdv_id = intval($_POST['rdv_id']);
+        $rdv_id = intval($_POST['rdv_id'] ?? 0);
         $reponse = trim($_POST['reponse_enseignant'] ?? '');
         try {
             $stmt = $pdo->prepare("UPDATE rendez_vous SET statut = 'accepte', reponse_enseignant = ?, date_reponse = NOW() WHERE id = ? AND enseignant_id = ?");
@@ -190,7 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Refus d'une demande de rendez-vous
     if (isset($_POST['action_refuser_rdv'])) {
         $active_tab = "rdv";
-        $rdv_id = intval($_POST['rdv_id']);
+        $rdv_id = intval($_POST['rdv_id'] ?? 0);
         $reponse = trim($_POST['reponse_enseignant'] ?? '');
         try {
             $stmt = $pdo->prepare("UPDATE rendez_vous SET statut = 'refuse', reponse_enseignant = ?, date_reponse = NOW() WHERE id = ? AND enseignant_id = ?");
@@ -223,6 +234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $offset_semaine = isset($_GET['semaine']) ? intval($_GET['semaine']) : 0;
 if (isset($_GET['semaine'])) { $active_tab = "edt"; }
 
+if (isset($_GET['presence_session_id'])) { $active_tab = "presence"; }
+
 $lundi_courant = strtotime('monday this week');
 $timestamp_lundi = strtotime($offset_semaine . " weeks", $lundi_courant);
 $date_debut_semaine = date('Y-m-d', $timestamp_lundi);
@@ -245,6 +258,53 @@ try {
 } catch (PDOException $e) {
     $msg_status .= "<div class='alert error'>Erreur Emploi du temps : " . $e->getMessage() . "</div>";
     $sessions = [];
+}
+
+
+// --- DONNÉES POUR LA GESTION DES PRÉSENCES ---
+$presence_sessions = [];
+$selected_presence_session = isset($_GET['presence_session_id']) ? intval($_GET['presence_session_id']) : 0;
+$students_presence = [];
+$session_presence_info = null;
+
+try {
+    $stmtPresenceSessions = $pdo->prepare("
+        SELECT s.id, s.date_cours, s.heure_debut, s.heure_fin, c.nom_cours, sl.nom_salle
+        FROM sessions_cours s
+        JOIN cours c ON s.cours_id = c.id
+        JOIN salles sl ON s.salle_id = sl.id
+        WHERE s.enseignant_id = ?
+        ORDER BY s.date_cours DESC, s.heure_debut DESC
+    ");
+    $stmtPresenceSessions->execute([$enseignant_id]);
+    $presence_sessions = $stmtPresenceSessions->fetchAll();
+
+    if ($selected_presence_session > 0) {
+        $stmtSessionInfo = $pdo->prepare("
+            SELECT s.*, c.nom_cours, sl.nom_salle
+            FROM sessions_cours s
+            JOIN cours c ON s.cours_id = c.id
+            JOIN salles sl ON s.salle_id = sl.id
+            WHERE s.id = ? AND s.enseignant_id = ?
+        ");
+        $stmtSessionInfo->execute([$selected_presence_session, $enseignant_id]);
+        $session_presence_info = $stmtSessionInfo->fetch();
+
+        if ($session_presence_info) {
+            $stmtStudentsPresence = $pdo->prepare("
+                SELECT u.id, u.nom, u.prenom, p.statut_presence
+                FROM inscriptions_cours ic
+                JOIN utilisateurs u ON ic.etudiant_id = u.id
+                LEFT JOIN presences p ON p.etudiant_id = u.id AND p.session_cours_id = ?
+                WHERE ic.cours_id = ?
+                ORDER BY u.nom ASC, u.prenom ASC
+            ");
+            $stmtStudentsPresence->execute([$selected_presence_session, $session_presence_info['cours_id']]);
+            $students_presence = $stmtStudentsPresence->fetchAll();
+        }
+    }
+} catch (Exception $e) {
+    $msg_status .= "<div class='alert error'>Erreur Présences : " . htmlspecialchars($e->getMessage()) . "</div>";
 }
 
 // ÉTUDIANTS POUR LA MESSAGERIE
@@ -365,6 +425,7 @@ $low_grades->execute([$enseignant_id]);
 $low_grades = $low_grades->fetchAll();
 
 // --- DEMANDES DE RENDEZ-VOUS REÇUES ---
+$demandes_rdv = [];
 try {
     $stmtRdv = $pdo->prepare("
         SELECT r.*, u.nom AS etu_nom, u.prenom AS etu_prenom, p.nom_promotion
@@ -381,6 +442,24 @@ try {
     $demandes_rdv = [];
     $msg_status .= "<div class='alert error'>Erreur Rendez-vous : " . htmlspecialchars($e->getMessage()) . "</div>";
 }
+
+// --- MESSAGES REÇUS PAR L'ENSEIGNANT ---
+$messages_recus_prof = [];
+try {
+    $stmtMessagesProf = $pdo->prepare("
+        SELECT m.*, u.nom AS exp_nom, u.prenom AS exp_prenom, u.role AS exp_role
+        FROM messages m
+        LEFT JOIN utilisateurs u ON m.expediteur_id = u.id
+        WHERE m.destinataire_id = ?
+        ORDER BY m.date_envoi DESC
+    ");
+    $stmtMessagesProf->execute([$enseignant_id]);
+    $messages_recus_prof = $stmtMessagesProf->fetchAll();
+} catch (Exception $e) {
+    $messages_recus_prof = [];
+    $msg_status .= "<div class='alert error'>Erreur réception messages : " . htmlspecialchars($e->getMessage()) . "</div>";
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -430,6 +509,7 @@ try {
     <ul class="sidebar-menu">
         <li><a id="btn-dashboard" class="active" onclick="switchTab('dashboard')"><i class="fa-solid fa-chart-line"></i> Vue d'ensemble</a></li>
         <li><a id="btn-edt" onclick="switchTab('edt')"><i class="fa-solid fa-calendar-week"></i> Mon Emploi du Temps</a></li>
+        <li><a id="btn-presence" onclick="switchTab('presence')"><i class="fa-solid fa-user-check"></i> Présences / Absences</a></li>
         <li><a id="btn-notes" onclick="switchTab('notes')"><i class="fa-solid fa-pen-to-square"></i> Saisie & Modification</a></li>
         <li><a id="btn-results" onclick="switchTab('results')"><i class="fa-solid fa-table-list"></i> Résultats de la Classe</a></li>
         <li><a id="btn-rdv" onclick="switchTab('rdv')"><i class="fa-solid fa-handshake"></i> Rendez-vous étudiants</a></li>
@@ -539,6 +619,72 @@ try {
                     <?php endfor; ?>
                 <?php endforeach; ?>
             </div>
+        </div>
+    </div>
+
+
+    <div id="tab-presence" class="tab-content">
+        <div class="card">
+            <h3><i class="fa-solid fa-user-check"></i> Gestion des présences et absences</h3>
+
+            <form method="GET" style="margin-bottom:20px;">
+                <input type="hidden" name="active_tab" value="presence">
+                <label>Choisir une séance de cours</label>
+                <select name="presence_session_id" onchange="this.form.submit()" required>
+                    <option value="">-- Sélectionner une séance --</option>
+                    <?php foreach($presence_sessions as $s): ?>
+                        <option value="<?php echo intval($s['id']); ?>" <?php echo ($selected_presence_session == $s['id']) ? 'selected' : ''; ?>>
+                            <?php echo date('d/m/Y', strtotime($s['date_cours'])) . ' - ' . substr($s['heure_debut'],0,5) . ' - ' . htmlspecialchars($s['nom_cours']) . ' (' . htmlspecialchars($s['nom_salle']) . ')'; ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </form>
+
+            <?php if($selected_presence_session > 0 && $session_presence_info): ?>
+                <h4>
+                    <?php echo htmlspecialchars($session_presence_info['nom_cours']); ?> —
+                    <?php echo date('d/m/Y', strtotime($session_presence_info['date_cours'])); ?>
+                    de <?php echo substr($session_presence_info['heure_debut'],0,5); ?>
+                    à <?php echo substr($session_presence_info['heure_fin'],0,5); ?>
+                </h4>
+
+                <?php if(empty($students_presence)): ?>
+                    <p>Aucun étudiant n'est inscrit à ce cours pour le moment.</p>
+                <?php else: ?>
+                    <form method="POST">
+                        <input type="hidden" name="session_id" value="<?php echo intval($selected_presence_session); ?>">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Étudiant</th>
+                                    <th>Présence</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach($students_presence as $etu): 
+                                    $statut = $etu['statut_presence'] ?? 'present';
+                                ?>
+                                    <tr>
+                                        <td><strong><?php echo htmlspecialchars($etu['nom'] . ' ' . $etu['prenom']); ?></strong></td>
+                                        <td>
+                                            <select name="presences[<?php echo intval($etu['id']); ?>]">
+                                                <option value="present" <?php echo ($statut === 'present') ? 'selected' : ''; ?>>Présent</option>
+                                                <option value="absent_justifie" <?php echo ($statut === 'absent_justifie') ? 'selected' : ''; ?>>Absent justifié</option>
+                                                <option value="absent_injustifie" <?php echo ($statut === 'absent_injustifie') ? 'selected' : ''; ?>>Absent injustifié</option>
+                                            </select>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <button type="submit" name="action_enregistrer_presences" style="margin-top:15px;">
+                            <i class="fa-solid fa-check"></i> Enregistrer les présences
+                        </button>
+                    </form>
+                <?php endif; ?>
+            <?php else: ?>
+                <p>Sélectionnez une séance pour faire l'appel.</p>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -868,7 +1014,8 @@ try {
             <?php endif; ?>
         </div>
     </div>
-        <div id="tab-rdv" class="tab-content">
+
+    <div id="tab-rdv" class="tab-content">
         <div class="card">
             <h3><i class="fa-solid fa-handshake"></i> Demandes de rendez-vous des étudiants</h3>
             <?php if(empty($demandes_rdv)): ?>
@@ -891,25 +1038,28 @@ try {
                                     <strong><?php echo htmlspecialchars($r['etu_nom'] . ' ' . $r['etu_prenom']); ?></strong><br>
                                     <small><?php echo htmlspecialchars($r['nom_promotion'] ?? 'Promotion non définie'); ?></small>
                                 </td>
-                                <td><?php echo date('d/m/Y', strtotime($r['date_rdv'])); ?><br><small><?php echo substr($r['heure_debut'],0,5) . ' - ' . substr($r['heure_fin'],0,5); ?></small></td>
+                                <td>
+                                    <?php echo date('d/m/Y', strtotime($r['date_rdv'])); ?><br>
+                                    <small><?php echo substr($r['heure_debut'],0,5) . ' - ' . substr($r['heure_fin'],0,5); ?></small>
+                                </td>
                                 <td>
                                     <strong><?php echo htmlspecialchars($r['sujet']); ?></strong>
                                     <?php if(!empty($r['message'])): ?><br><small><?php echo htmlspecialchars($r['message']); ?></small><?php endif; ?>
                                     <?php if(!empty($r['reponse_enseignant'])): ?><br><em>Réponse : <?php echo htmlspecialchars($r['reponse_enseignant']); ?></em><?php endif; ?>
                                 </td>
-                                <td><span class="badge <?php echo htmlspecialchars($r['statut']); ?>"><?php echo str_replace('_', ' ', htmlspecialchars($r['statut'])); ?></span></td>
+                                <td><span class="badge <?php echo htmlspecialchars($r['statut']); ?>"><?php echo htmlspecialchars(str_replace('_', ' ', $r['statut'])); ?></span></td>
                                 <td>
                                     <?php if($r['statut'] === 'en_attente'): ?>
                                         <form method="POST" style="margin-bottom:8px;">
-                                            <input type="hidden" name="rdv_id" value="<?php echo $r['id']; ?>">
+                                            <input type="hidden" name="rdv_id" value="<?php echo intval($r['id']); ?>">
                                             <textarea name="reponse_enseignant" rows="2" placeholder="Réponse facultative..." style="margin-bottom:6px;"></textarea>
                                             <div style="display:flex; gap:6px;">
-                                                <button type="submit" name="action_accepter_rdv" style="background:#38A169; margin:0;">Accepter</button>
-                                                <button type="submit" name="action_refuser_rdv" style="background:#E53E3E; margin:0;">Refuser</button>
+                                                <button type="submit" name="action_accepter_rdv" style="background:#38A169;">Accepter</button>
+                                                <button type="submit" name="action_refuser_rdv" style="background:#E53E3E;">Refuser</button>
                                             </div>
                                         </form>
                                     <?php else: ?>
-                                        <small>Déjà traité</small>
+                                        -
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -919,8 +1069,23 @@ try {
             <?php endif; ?>
         </div>
     </div>
-    
+
     <div id="tab-messagerie" class="tab-content">
+        <div class="card">
+            <h3><i class="fa-solid fa-inbox"></i> Messages reçus</h3>
+            <?php if(empty($messages_recus_prof)): ?>
+                <p>Aucun message reçu pour le moment.</p>
+            <?php else: ?>
+                <?php foreach($messages_recus_prof as $m): ?>
+                    <div style="background:#F7FAFC; padding:12px; margin-bottom:10px; border-left:4px solid #0A2240; border-radius:4px; overflow:hidden;">
+                        <strong>De : <?php echo htmlspecialchars(trim(($m['exp_prenom'] ?? '') . ' ' . ($m['exp_nom'] ?? 'Utilisateur supprimé'))); ?></strong>
+                        <small style="float:right; color:#718096;"><?php echo htmlspecialchars($m['date_envoi']); ?></small>
+                        <p style="margin:8px 0 0 0;"><?php echo nl2br(htmlspecialchars($m['contenu'])); ?></p>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+
         <div class="card">
             <h3><i class="fa-solid fa-envelope"></i> Contacter un étudiant</h3>
             <form method="POST">
@@ -970,6 +1135,15 @@ try {
             }
         });
     }
+</script>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+$(document).ready(function() {
+    setTimeout(function() {
+        $(".alert.success, .alert.error, .alert.danger").fadeOut(800);
+    }, 4000);
+});
 </script>
 </body>
 </html>
