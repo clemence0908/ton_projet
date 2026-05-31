@@ -12,6 +12,28 @@ START TRANSACTION;
 SET time_zone = "+00:00";
 
 
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP TABLE IF EXISTS `presences`;
+DROP TABLE IF EXISTS `sessions_cours`;
+DROP TABLE IF EXISTS `rendez_vous`;
+DROP TABLE IF EXISTS `messages`;
+DROP TABLE IF EXISTS `notes`;
+DROP TABLE IF EXISTS `inscriptions_cours`;
+DROP TABLE IF EXISTS `etudiants_profil`;
+DROP TABLE IF EXISTS `etudiants`;
+DROP TABLE IF EXISTS `groupes_td`;
+DROP TABLE IF EXISTS `amphis`;
+DROP TABLE IF EXISTS `cours`;
+DROP TABLE IF EXISTS `salles`;
+DROP TABLE IF EXISTS `promotions`;
+DROP TABLE IF EXISTS `majeures`;
+DROP TABLE IF EXISTS `unites_enseignement`;
+DROP TABLE IF EXISTS `utilisateurs`;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
@@ -33,15 +55,6 @@ CREATE TABLE `amphis` (
   `promotion_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
---
--- Déchargement des données de la table `amphis`
---
-
-INSERT INTO `amphis` (`id`, `nom`, `promotion_id`) VALUES
-(1, 'Amphi ING1 A', 1),
-(2, 'Amphi ING3 A', 2),
-(3, 'Amphi ING4 A', 3);
-
 -- --------------------------------------------------------
 
 --
@@ -62,8 +75,24 @@ CREATE TABLE `cours` (
 --
 
 INSERT INTO `cours` (`id`, `ue_id`, `promotion_id`, `nom_cours`, `coefficient`, `cours_prerequis_id`) VALUES
-(1, 1, 2, 'Bases du Développement Web (ING3)', 1, NULL),
-(2, 1, 3, 'Architecture des Systèmes Web (ING4)', 1, 1);
+(1, 1, NULL, 'Bases du Développement Web', 1, NULL),
+(2, 1, NULL, 'Architecture des Systèmes Web', 1, NULL),
+(3, 1, NULL, 'Développement PHP / MySQL', 1, NULL),
+(4, 1, NULL, 'Algorithmique et Programmation', 1, NULL),
+(5, 1, NULL, 'Bases de Données Relationnelles', 1, NULL),
+(6, 1, NULL, 'HTML, CSS et JavaScript', 1, NULL),
+(7, 1, NULL, 'Programmation Orientée Objet', 1, NULL),
+(8, 1, NULL, 'Réseaux Informatiques', 1, NULL),
+(9, 1, NULL, 'Mathématiques pour l’Informatique', 1, NULL),
+(10, 1, NULL, 'Cybersécurité', 1, NULL),
+(11, 1, NULL, 'Cloud Computing', 1, NULL),
+(12, 1, NULL, 'Data Science', 1, NULL),
+(13, 1, NULL, 'Intelligence Artificielle', 1, NULL),
+(14, 1, NULL, 'Gestion de Projet Informatique', 1, NULL),
+(15, 1, NULL, 'APIs et Services Web', 1, NULL),
+(16, 1, NULL, 'Systèmes d’Exploitation', 1, NULL),
+(17, 1, NULL, 'Développement Mobile', 1, NULL),
+(18, 1, NULL, 'Anglais TOEIC', 1, NULL);
 
 -- --------------------------------------------------------
 
@@ -135,18 +164,6 @@ CREATE TABLE `groupes_td` (
   `amphi_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
---
--- Déchargement des données de la table `groupes_td`
---
-
-INSERT INTO `groupes_td` (`id`, `nom`, `amphi_id`) VALUES
-(1, 'TD ING1-1', 1),
-(2, 'TD ING1-2', 1),
-(3, 'TD ING3-1', 2),
-(4, 'TD ING3-2', 2),
-(5, 'TD ING4-1', 3),
-(6, 'TD ING4-2', 3);
-
 -- --------------------------------------------------------
 
 --
@@ -160,11 +177,10 @@ CREATE TABLE `inscriptions_cours` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 --
--- Déchargement des données de la table `inscriptions_cours`
+-- La table `inscriptions_cours` est vide au départ.
+-- Les étudiants seront inscrits aux cours depuis l'espace administrateur.
 --
 
-INSERT INTO `inscriptions_cours` (`etudiant_id`, `cours_id`, `date_inscription`) VALUES
-(3, 2, '2025-09-01');
 
 -- --------------------------------------------------------
 
@@ -219,12 +235,10 @@ CREATE TABLE `notes` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
 --
--- Déchargement des données de la table `notes`
+-- La table `notes` est vide au départ.
+-- Les notes seront ajoutées par les enseignants.
 --
 
-INSERT INTO `notes` (`id`, `etudiant_id`, `cours_id`, `enseignant_id`, `note_valeur`, `type_evaluation`, `nom_examen`, `statut_verrouillage`, `date_saisie`) VALUES
-(1, 3, 2, 25, '14.50', 'CC', 'Contrôle continu 1', 'valide_definitif', '2026-05-26 22:27:00'),
-(2, 3, 2, 25, '12.00', 'Examen', 'Examen final', 'en_cours', '2026-05-26 22:27:00');
 
 -- --------------------------------------------------------
 
@@ -371,6 +385,8 @@ CREATE TABLE `utilisateurs` (
 --
 
 INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role`, `date_creation`) VALUES
+
+-- Étudiants
 (1, 'emma.martin@ecole.fr', 'password123', 'Martin', 'Emma', 'etudiant', '2026-05-26 22:26:59'),
 (2, 'clemence.audebert@ecole.fr', 'password123', 'Audebert', 'Clemence', 'etudiant', '2026-05-26 22:26:59'),
 (3, 'tasnyme.tebib@ecole.fr', 'password123', 'Tebib', 'Tasnyme', 'etudiant', '2026-05-26 22:26:59'),
@@ -385,7 +401,7 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 (12, 'noah.dubois@ecole.fr', 'password123', 'Dubois', 'Noah', 'etudiant', '2026-05-26 22:26:59'),
 (13, 'alice.fournier@ecole.fr', 'password123', 'Fournier', 'Alice', 'etudiant', '2026-05-26 22:26:59'),
 (14, 'louis.morel@ecole.fr', 'password123', 'Morel', 'Louis', 'etudiant', '2026-05-26 22:26:59'),
-(15, 'ines.laurent@ecole.fr', 'password123', 'Laurent', 'Inès', 'etudiant', '2026-05-26 22:26:59'),
+(15, 'ines.laurent@ecole.fr', 'password123', 'Laurent', 'Inès', 'etudiant','2026-05-26 22:26:59'),
 (16, 'adam.simon@ecole.fr', 'password123', 'Simon', 'Adam', 'etudiant', '2026-05-26 22:26:59'),
 (17, 'lina.michel@ecole.fr', 'password123', 'Michel', 'Lina', 'etudiant', '2026-05-26 22:26:59'),
 (18, 'ethan.lefevre@ecole.fr', 'password123', 'Lefevre', 'Ethan', 'etudiant', '2026-05-26 22:26:59'),
@@ -395,14 +411,18 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 (22, 'leo.chevalier@ecole.fr', 'password123', 'Chevalier', 'Léo', 'etudiant', '2026-05-26 22:26:59'),
 (23, 'robin.desbois@ecole.fr', 'password123', 'Des Bois', 'Robin', 'etudiant', '2026-05-26 22:26:59'),
 (24, 'lucas.bernard@ecole.fr', 'password123', 'Bernard', 'Lucas', 'etudiant', '2026-05-26 22:26:59'),
+
+-- Enseignants
 (25, 'durand.prof@ecole.fr', 'password123', 'Durand', 'Pierre', 'enseignant', '2026-05-26 22:26:59'),
-(26, 'lambert.prof@ecole.fr', 'password123', 'Lambert', 'Sophie', 'enseignant', '2026-05-26 22:26:59'),
+(26, 'lambert.prof@ecole.fr', 'password123', 'Lambert', 'Sophie', 'enseignant', '2026-05-26 22:26:59' ),
 (27, 'girard.prof@ecole.fr', 'password123', 'Girard', 'Antoine', 'enseignant', '2026-05-26 22:26:59'),
 (28, 'andre.prof@ecole.fr', 'password123', 'Andre', 'Marie', 'enseignant', '2026-05-26 22:26:59'),
 (29, 'muller.prof@ecole.fr', 'password123', 'Muller', 'Thomas', 'enseignant', '2026-05-26 22:26:59'),
 (30, 'faure.prof@ecole.fr', 'password123', 'Faure', 'Camille', 'enseignant', '2026-05-26 22:26:59'),
 (31, 'perrin.prof@ecole.fr', 'password123', 'Perrin', 'Nicolas', 'enseignant', '2026-05-26 22:26:59'),
 (32, 'renard.prof@ecole.fr', 'password123', 'Renard', 'Claire', 'enseignant', '2026-05-26 22:26:59'),
+
+-- Administrateurs
 (33, 'direction.studies@ecole.fr', 'password123', 'Lemoine', 'Claire', 'admin', '2026-05-26 22:26:59'),
 (34, 'admin1@ecole.fr', 'password123', 'Carreau', 'Julie', 'admin', '2026-05-26 22:26:59'),
 (35, 'admin2@ecole.fr', 'password123', 'Jones', 'Hervé', 'admin', '2026-05-26 22:26:59');
@@ -414,7 +434,6 @@ INSERT INTO `utilisateurs` (`id`, `email`, `mot_de_pass`, `nom`, `prenom`, `role
 --
 -- Index pour la table `amphis`
 --
-
 ALTER TABLE `amphis`
   ADD PRIMARY KEY (`id`),
   ADD KEY `promotion_id` (`promotion_id`);
@@ -422,7 +441,6 @@ ALTER TABLE `amphis`
 --
 -- Index pour la table `cours`
 --
-
 ALTER TABLE `cours`
   ADD PRIMARY KEY (`id`),
   ADD KEY `ue_id` (`ue_id`),
@@ -432,7 +450,6 @@ ALTER TABLE `cours`
 --
 -- Index pour la table `etudiants`
 --
-
 ALTER TABLE `etudiants`
   ADD PRIMARY KEY (`utilisateur_id`),
   ADD KEY `promotion_id` (`promotion_id`),
@@ -441,14 +458,12 @@ ALTER TABLE `etudiants`
 --
 -- Index pour la table `etudiants_profil`
 --
-
 ALTER TABLE `etudiants_profil`
   ADD PRIMARY KEY (`id`);
 
 --
 -- Index pour la table `groupes_td`
 --
-
 ALTER TABLE `groupes_td`
   ADD PRIMARY KEY (`id`),
   ADD KEY `amphi_id` (`amphi_id`);
@@ -456,7 +471,6 @@ ALTER TABLE `groupes_td`
 --
 -- Index pour la table `inscriptions_cours`
 --
-
 ALTER TABLE `inscriptions_cours`
   ADD PRIMARY KEY (`etudiant_id`,`cours_id`),
   ADD KEY `cours_id` (`cours_id`);
@@ -464,7 +478,6 @@ ALTER TABLE `inscriptions_cours`
 --
 -- Index pour la table `majeures`
 --
-
 ALTER TABLE `majeures`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `code_majeure` (`code_majeure`);
@@ -472,16 +485,12 @@ ALTER TABLE `majeures`
 --
 -- Index pour la table `messages`
 --
-
 ALTER TABLE `messages`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `expediteur_id` (`expediteur_id`),
-  ADD KEY `destinataire_id` (`destinataire_id`);
+  ADD PRIMARY KEY (`id`);
 
 --
 -- Index pour la table `notes`
 --
-
 ALTER TABLE `notes`
   ADD PRIMARY KEY (`id`),
   ADD KEY `etudiant_id` (`etudiant_id`),
@@ -491,7 +500,6 @@ ALTER TABLE `notes`
 --
 -- Index pour la table `presences`
 --
-
 ALTER TABLE `presences`
   ADD PRIMARY KEY (`id`),
   ADD KEY `session_cours_id` (`session_cours_id`),
@@ -500,7 +508,6 @@ ALTER TABLE `presences`
 --
 -- Index pour la table `rendez_vous`
 --
-
 ALTER TABLE `rendez_vous`
   ADD PRIMARY KEY (`id`),
   ADD KEY `etudiant_id` (`etudiant_id`),
@@ -509,7 +516,6 @@ ALTER TABLE `rendez_vous`
 --
 -- Index pour la table `promotions`
 --
-
 ALTER TABLE `promotions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `majeure_id` (`majeure_id`);
@@ -517,7 +523,6 @@ ALTER TABLE `promotions`
 --
 -- Index pour la table `salles`
 --
-
 ALTER TABLE `salles`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `nom_salle` (`nom_salle`);
@@ -525,7 +530,6 @@ ALTER TABLE `salles`
 --
 -- Index pour la table `sessions_cours`
 --
-
 ALTER TABLE `sessions_cours`
   ADD PRIMARY KEY (`id`),
   ADD KEY `cours_id` (`cours_id`),
@@ -536,7 +540,6 @@ ALTER TABLE `sessions_cours`
 --
 -- Index pour la table `unites_enseignement`
 --
-
 ALTER TABLE `unites_enseignement`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `code_ue` (`code_ue`);
@@ -544,7 +547,6 @@ ALTER TABLE `unites_enseignement`
 --
 -- Index pour la table `utilisateurs`
 --
-
 ALTER TABLE `utilisateurs`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `email` (`email`);
@@ -556,98 +558,84 @@ ALTER TABLE `utilisateurs`
 --
 -- AUTO_INCREMENT pour la table `amphis`
 --
-
 ALTER TABLE `amphis`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `cours`
 --
-
 ALTER TABLE `cours`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=19;
 
 --
 -- AUTO_INCREMENT pour la table `etudiants_profil`
 --
-
 ALTER TABLE `etudiants_profil`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `groupes_td`
 --
-
 ALTER TABLE `groupes_td`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `majeures`
 --
-
 ALTER TABLE `majeures`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT pour la table `messages`
 --
-
 ALTER TABLE `messages`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `notes`
 --
-
 ALTER TABLE `notes`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `presences`
 --
-
 ALTER TABLE `presences`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `promotions`
 --
-
 ALTER TABLE `promotions`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT pour la table `rendez_vous`
 --
-
 ALTER TABLE `rendez_vous`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `salles`
 --
-
 ALTER TABLE `salles`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT pour la table `sessions_cours`
 --
-
 ALTER TABLE `sessions_cours`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT pour la table `unites_enseignement`
 --
-
 ALTER TABLE `unites_enseignement`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT pour la table `utilisateurs`
 --
-
 ALTER TABLE `utilisateurs`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=36;
 
@@ -658,14 +646,12 @@ ALTER TABLE `utilisateurs`
 --
 -- Contraintes pour la table `amphis`
 --
-
 ALTER TABLE `amphis`
   ADD CONSTRAINT `amphis_ibfk_1` FOREIGN KEY (`promotion_id`) REFERENCES `promotions` (`id`) ON DELETE CASCADE;
 
 --
 -- Contraintes pour la table `cours`
 --
-
 ALTER TABLE `cours`
   ADD CONSTRAINT `cours_ibfk_1` FOREIGN KEY (`ue_id`) REFERENCES `unites_enseignement` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `cours_ibfk_2` FOREIGN KEY (`cours_prerequis_id`) REFERENCES `cours` (`id`) ON DELETE SET NULL,
@@ -674,7 +660,6 @@ ALTER TABLE `cours`
 --
 -- Contraintes pour la table `etudiants`
 --
-
 ALTER TABLE `etudiants`
   ADD CONSTRAINT `etudiants_ibfk_1` FOREIGN KEY (`utilisateur_id`) REFERENCES `utilisateurs` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `etudiants_ibfk_2` FOREIGN KEY (`promotion_id`) REFERENCES `promotions` (`id`),
@@ -683,30 +668,19 @@ ALTER TABLE `etudiants`
 --
 -- Contraintes pour la table `groupes_td`
 --
-
 ALTER TABLE `groupes_td`
   ADD CONSTRAINT `groupes_td_ibfk_1` FOREIGN KEY (`amphi_id`) REFERENCES `amphis` (`id`) ON DELETE CASCADE;
 
 --
 -- Contraintes pour la table `inscriptions_cours`
 --
-
 ALTER TABLE `inscriptions_cours`
   ADD CONSTRAINT `inscriptions_cours_ibfk_1` FOREIGN KEY (`etudiant_id`) REFERENCES `etudiants` (`utilisateur_id`) ON DELETE CASCADE,
   ADD CONSTRAINT `inscriptions_cours_ibfk_2` FOREIGN KEY (`cours_id`) REFERENCES `cours` (`id`) ON DELETE CASCADE;
 
 --
--- Contraintes pour la table `messages`
---
-
-ALTER TABLE `messages`
-  ADD CONSTRAINT `messages_ibfk_1` FOREIGN KEY (`expediteur_id`) REFERENCES `utilisateurs` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `messages_ibfk_2` FOREIGN KEY (`destinataire_id`) REFERENCES `utilisateurs` (`id`) ON DELETE SET NULL;
-
---
 -- Contraintes pour la table `notes`
 --
-
 ALTER TABLE `notes`
   ADD CONSTRAINT `notes_ibfk_1` FOREIGN KEY (`etudiant_id`) REFERENCES `etudiants` (`utilisateur_id`) ON DELETE CASCADE,
   ADD CONSTRAINT `notes_ibfk_2` FOREIGN KEY (`cours_id`) REFERENCES `cours` (`id`) ON DELETE CASCADE,
@@ -715,7 +689,6 @@ ALTER TABLE `notes`
 --
 -- Contraintes pour la table `presences`
 --
-
 ALTER TABLE `presences`
   ADD CONSTRAINT `presences_ibfk_1` FOREIGN KEY (`session_cours_id`) REFERENCES `sessions_cours` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `presences_ibfk_2` FOREIGN KEY (`etudiant_id`) REFERENCES `etudiants` (`utilisateur_id`) ON DELETE CASCADE;
@@ -723,14 +696,12 @@ ALTER TABLE `presences`
 --
 -- Contraintes pour la table `promotions`
 --
-
 ALTER TABLE `promotions`
   ADD CONSTRAINT `promotions_ibfk_1` FOREIGN KEY (`majeure_id`) REFERENCES `majeures` (`id`) ON DELETE SET NULL;
 
 --
 -- Contraintes pour la table `sessions_cours`
 --
-
 ALTER TABLE `sessions_cours`
   ADD CONSTRAINT `fk_session_groupe_td` FOREIGN KEY (`groupe_td_id`) REFERENCES `groupes_td` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `sessions_cours_ibfk_1` FOREIGN KEY (`cours_id`) REFERENCES `cours` (`id`) ON DELETE CASCADE,
@@ -740,11 +711,9 @@ ALTER TABLE `sessions_cours`
 --
 -- Contraintes pour la table `rendez_vous`
 --
-
 ALTER TABLE `rendez_vous`
   ADD CONSTRAINT `rendez_vous_ibfk_1` FOREIGN KEY (`etudiant_id`) REFERENCES `etudiants` (`utilisateur_id`) ON DELETE CASCADE,
   ADD CONSTRAINT `rendez_vous_ibfk_2` FOREIGN KEY (`enseignant_id`) REFERENCES `utilisateurs` (`id`) ON DELETE CASCADE;
-
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
