@@ -19,21 +19,6 @@ try {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     // Récupérer les résultats sous forme de tableaux associatifs par défaut
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-    // --- AUTO-SYNCHRONISATION GLOBALE DES INSCRIPTIONS ---
-    // Assure que tous les étudiants sont inscrits aux cours de leur promotion à chaque chargement
-    // (Utilise INSERT IGNORE pour éviter les doublons sans erreur)
-    try {
-        $pdo->exec("
-            INSERT IGNORE INTO inscriptions_cours (etudiant_id, cours_id, date_inscription)
-            SELECT e.utilisateur_id, c.id, CURDATE()
-            FROM etudiants e
-            JOIN cours c ON e.promotion_id = c.promotion_id
-        ");
-    } catch (Exception $e) { 
-        // En cas d'erreur de structure (ex: colonne promotion_id manquante dans cours), 
-        // on ignore silencieusement pour ne pas bloquer l'application.
-    }
 } catch (PDOException $e) {
     die("Erreur critique de connexion à la base de données : " . $e->getMessage());
 }
