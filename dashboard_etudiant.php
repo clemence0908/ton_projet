@@ -14,6 +14,26 @@ try {
     $pdo->exec("ALTER TABLE cours ADD COLUMN coefficient FLOAT DEFAULT 1.0 AFTER nom_cours");
 } catch (Exception $e) { /* Colonne probablement déjà présente */ }
 
+// --- AUTO-MIGRATION : TABLE DES RENDEZ-VOUS ÉTUDIANT / ENSEIGNANT ---
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS rendez_vous (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        etudiant_id INT NOT NULL,
+        enseignant_id INT NOT NULL,
+        sujet VARCHAR(150) NOT NULL,
+        message TEXT NULL,
+        date_rdv DATE NOT NULL,
+        heure_debut TIME NOT NULL,
+        heure_fin TIME NOT NULL,
+        statut ENUM('en_attente','accepte','refuse','annule') NOT NULL DEFAULT 'en_attente',
+        reponse_enseignant TEXT NULL,
+        date_demande TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        date_reponse TIMESTAMP NULL DEFAULT NULL,
+        INDEX idx_rdv_etudiant (etudiant_id),
+        INDEX idx_rdv_enseignant (enseignant_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+} catch (Exception $e) { /* Table probablement déjà présente */ }
+
 $msg_status = "";
 $active_tab_after_post = "dashboard"; 
 
@@ -55,6 +75,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+
+    // Demande de rendez-vous avec un enseignant
+    if (isset($_POST['action_demander_rdv'])) {
+        $active_tab_after_post = "rdv";
+        $enseignant_rdv_id = intval($_POST['enseignant_id'] ?? 0);
+        $sujet = trim($_POST['sujet_rdv'] ?? '');
+        $message_rdv = trim($_POST['message_rdv'] ?? '');
+        $date_rdv = $_POST['date_rdv'] ?? '';
+        $heure_debut = $_POST['heure_debut'] ?? '';
+        $heure_fin = $_POST['heure_fin'] ?? '';
+
+        if ($enseignant_rdv_id <= 0 || empty($sujet) || empty($date_rdv) || empty($heure_debut) || empty($heure_fin)) {
+            $msg_status = "<div class='alert danger'>❌ Merci de remplir tous les champs obligatoires du rendez-vous.</div>";
+        } elseif ($heure_fin <= $heure_debut) {
+            $msg_status = "<div class='alert danger'>❌ L'heure de fin doit être après l'heure de début.</div>";
+        } else {
+            try {
+                $stmt = $pdo->prepare("INSERT INTO rendez_vous (etudiant_id, enseignant_id, sujet, message, date_rdv, heure_debut, heure_fin, statut) VALUES (?, ?, ?, ?, ?, ?, ?, 'en_attente')");
+                $stmt->execute([$etudiant_id, $enseignant_rdv_id, $sujet, $message_rdv, $date_rdv, $heure_debut, $heure_fin]);
+                $msg_status = "<div class='alert success'>✅ Demande de rendez-vous envoyée au professeur.</div>";
+            } catch (Exception $e) {
+                $msg_status = "<div class='alert danger'>❌ Erreur de rendez-vous : " . htmlspecialchars($e->getMessage()) . "</div>";
+            }
+        }
+    }
+
+    // Annulation d'une demande de rendez-vous
+    if (isset($_POST['action_annuler_rdv'])) {
+        $active_tab_after_post = "rdv";
+        $rdv_id = intval($_POST['rdv_id'] ?? 0);
+        try {
+            $stmt = $pdo->prepare("UPDATE rendez_vous SET statut = 'annule' WHERE id = ? AND etudiant_id = ? AND statut = 'en_attente'");
+            $stmt->execute([$rdv_id, $etudiant_id]);
+            $msg_status = "<div class='alert success'>✅ Demande de rendez-vous annulée.</div>";
+        } catch (Exception $e) {
+            $msg_status = "<div class='alert danger'>❌ Erreur annulation RDV : " . htmlspecialchars($e->getMessage()) . "</div>";
+        }
+    }
+
 }
 
 // =====================================================================
@@ -67,7 +126,8 @@ $my_sessions = [];
 $bulletin = [];
 $all_profs = [];
 $boite_recus = [];
-$presence_detail = [];
+$mes_rdv = [];
+$mes_presences = [];
 
 // 1. Profil de l'étudiant
 try {
@@ -110,27 +170,6 @@ try {
     }
 } catch (Exception $e) {
     $msg_status .= "<div class='alert danger'>⚠️ Erreur Absences : " . htmlspecialchars($e->getMessage()) . "</div>";
-}
-
-// 2bis. Détail des présences / absences
-try {
-    $req_presence_detail = $pdo->prepare("
-        SELECT p.statut_presence, p.date_marquage,
-               s.date_cours, s.heure_debut, s.heure_fin,
-               c.nom_cours, sl.nom_salle,
-               u.nom AS prof_nom, u.prenom AS prof_prenom
-        FROM presences p
-        JOIN sessions_cours s ON p.session_cours_id = s.id
-        JOIN cours c ON s.cours_id = c.id
-        JOIN salles sl ON s.salle_id = sl.id
-        JOIN utilisateurs u ON s.enseignant_id = u.id
-        WHERE p.etudiant_id = ?
-        ORDER BY s.date_cours DESC, s.heure_debut DESC
-    ");
-    $req_presence_detail->execute([$etudiant_id]);
-    $presence_detail = $req_presence_detail->fetchAll();
-} catch (Exception $e) {
-    $msg_status .= "<div class='alert danger'>⚠️ Erreur détail présences : " . htmlspecialchars($e->getMessage()) . "</div>";
 }
 
 // NAVIGATION DE L'EMPLOI DU TEMPS (Semaine)
@@ -251,6 +290,42 @@ try {
 } catch (Exception $e) {
     $msg_status .= "<div class='alert danger'>⚠️ Erreur Messagerie : " . htmlspecialchars($e->getMessage()) . "</div>";
 }
+
+// 7. Historique des présences / absences
+try {
+    $stmtPres = $pdo->prepare("
+        SELECT pr.*, sc.date_cours, sc.heure_debut, sc.heure_fin, c.nom_cours, sl.nom_salle,
+               u.nom AS prof_nom, u.prenom AS prof_prenom
+        FROM presences pr
+        JOIN sessions_cours sc ON pr.session_cours_id = sc.id
+        JOIN cours c ON sc.cours_id = c.id
+        JOIN salles sl ON sc.salle_id = sl.id
+        JOIN utilisateurs u ON sc.enseignant_id = u.id
+        WHERE pr.etudiant_id = ?
+        ORDER BY sc.date_cours DESC, sc.heure_debut DESC
+    ");
+    $stmtPres->execute([$etudiant_id]);
+    $mes_presences = $stmtPres->fetchAll();
+} catch (Exception $e) {
+    $mes_presences = [];
+}
+
+// 8. Rendez-vous demandés par l'étudiant
+try {
+    $stmtRdv = $pdo->prepare("
+        SELECT r.*, u.nom AS prof_nom, u.prenom AS prof_prenom
+        FROM rendez_vous r
+        JOIN utilisateurs u ON r.enseignant_id = u.id
+        WHERE r.etudiant_id = ?
+        ORDER BY r.date_rdv DESC, r.heure_debut DESC
+    ");
+    $stmtRdv->execute([$etudiant_id]);
+    $mes_rdv = $stmtRdv->fetchAll();
+} catch (Exception $e) {
+    $mes_rdv = [];
+    $msg_status .= "<div class='alert danger'>⚠️ Erreur Rendez-vous : " . htmlspecialchars($e->getMessage()) . "</div>";
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -291,8 +366,9 @@ try {
     <ul class="sidebar-menu">
         <li><a href="#" id="btn-dashboard" class="active" onclick="switchTab('dashboard')"><i class="fa-solid fa-chart-line"></i> Vue d'ensemble</a></li>
         <li><a href="#" id="btn-edt" onclick="switchTab('edt')"><i class="fa-solid fa-calendar-week"></i> Mon Emploi du Temps</a></li>
-        <li><a href="#" id="btn-presence" onclick="switchTab('presence')"><i class="fa-solid fa-user-check"></i> Mes Présences</a></li>
         <li><a href="#" id="btn-notes" onclick="switchTab('notes')"><i class="fa-solid fa-graduation-cap"></i> Mes Notes & Résultats</a></li>
+        <li><a href="#" id="btn-presence" onclick="switchTab('presence')"><i class="fa-solid fa-user-check"></i> Mes Présences</a></li>
+        <li><a href="#" id="btn-rdv" onclick="switchTab('rdv')"><i class="fa-solid fa-calendar-plus"></i> Mes Rendez-vous</a></li>
         <li><a href="#" id="btn-messagerie" onclick="switchTab('messagerie')"><i class="fa-solid fa-envelope"></i> Messagerie</a></li>
         <li><a href="deconnexion.php" style="color:#FEB2B2;"><i class="fa-solid fa-right-from-bracket"></i> Déconnexion</a></li>
     </ul>
@@ -426,24 +502,7 @@ try {
     <div id="tab-presence" class="tab-content">
         <div class="card">
             <h3><i class="fa-solid fa-user-check"></i> Mes présences et absences</h3>
-            <p style="color:#4A5568;">Cette page affiche les statuts enregistrés par les enseignants pour chaque séance.</p>
-
-            <div class="grid" style="margin-bottom:20px;">
-                <div class="stat-box success">
-                    <h3><?php echo count(array_filter($presence_detail, fn($p) => $p['statut_presence'] === 'present')); ?></h3>
-                    <p>Présence(s)</p>
-                </div>
-                <div class="stat-box success">
-                    <h3><?php echo $absences['absences_justifiees']; ?></h3>
-                    <p>Absence(s) justifiée(s)</p>
-                </div>
-                <div class="stat-box danger">
-                    <h3><?php echo $absences['absences_injustifiees']; ?></h3>
-                    <p>Absence(s) injustifiée(s)</p>
-                </div>
-            </div>
-
-            <?php if(empty($presence_detail)): ?>
+            <?php if(empty($mes_presences)): ?>
                 <p>Aucune présence ou absence enregistrée pour le moment.</p>
             <?php else: ?>
                 <table>
@@ -453,30 +512,28 @@ try {
                             <th>Cours</th>
                             <th>Horaire</th>
                             <th>Salle</th>
-                            <th>Enseignant</th>
+                            <th>Professeur</th>
                             <th>Statut</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($presence_detail as $pd): 
-                            if ($pd['statut_presence'] === 'present') {
-                                $statut_label = 'Présent';
-                                $statut_color = '#22543D';
-                            } elseif ($pd['statut_presence'] === 'absent_justifie') {
-                                $statut_label = 'Absent justifié';
-                                $statut_color = '#975A16';
-                            } else {
-                                $statut_label = 'Absent injustifié';
-                                $statut_color = '#742A2A';
-                            }
-                        ?>
+                        <?php foreach($mes_presences as $p): ?>
                             <tr>
-                                <td><?php echo date('d/m/Y', strtotime($pd['date_cours'])); ?></td>
-                                <td><strong><?php echo htmlspecialchars($pd['nom_cours']); ?></strong></td>
-                                <td><?php echo substr($pd['heure_debut'],0,5); ?> - <?php echo substr($pd['heure_fin'],0,5); ?></td>
-                                <td><?php echo htmlspecialchars($pd['nom_salle']); ?></td>
-                                <td>M. <?php echo htmlspecialchars($pd['prof_nom'] . ' ' . $pd['prof_prenom']); ?></td>
-                                <td style="font-weight:bold; color:<?php echo $statut_color; ?>;"><?php echo $statut_label; ?></td>
+                                <td><?php echo date('d/m/Y', strtotime($p['date_cours'])); ?></td>
+                                <td><?php echo htmlspecialchars($p['nom_cours']); ?></td>
+                                <td><?php echo substr($p['heure_debut'],0,5) . ' - ' . substr($p['heure_fin'],0,5); ?></td>
+                                <td><?php echo htmlspecialchars($p['nom_salle']); ?></td>
+                                <td><?php echo htmlspecialchars($p['prof_nom'] . ' ' . $p['prof_prenom']); ?></td>
+                                <td>
+                                    <?php
+                                        $label = [
+                                            'present' => 'Présent',
+                                            'absent_justifie' => 'Absent justifié',
+                                            'absent_injustifie' => 'Absent injustifié'
+                                        ][$p['statut_presence']] ?? $p['statut_presence'];
+                                    ?>
+                                    <span class="badge"><?php echo htmlspecialchars($label); ?></span>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -540,6 +597,91 @@ try {
                     </tbody>
                 </table>
             <?php endif; ?>
+        </div>
+    </div>
+
+
+    <div id="tab-rdv" class="tab-content">
+        <div class="grid">
+            <div class="card">
+                <h3><i class="fa-solid fa-calendar-plus"></i> Demander un rendez-vous</h3>
+                <form method="POST">
+                    <label>Professeur</label>
+                    <select name="enseignant_id" required>
+                        <option value="">-- Choisir un professeur --</option>
+                        <?php foreach($all_profs as $p): ?>
+                            <option value="<?php echo intval($p['id']); ?>">
+                                <?php echo htmlspecialchars($p['nom'] . ' ' . $p['prenom']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+
+                    <label>Sujet du rendez-vous</label>
+                    <input type="text" name="sujet_rdv" required placeholder="Ex : Question sur les notes, orientation, absence...">
+
+                    <label>Message complémentaire</label>
+                    <textarea name="message_rdv" rows="4" placeholder="Expliquez rapidement la raison du rendez-vous..."></textarea>
+
+                    <div class="grid" style="grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                        <div>
+                            <label>Date souhaitée</label>
+                            <input type="date" name="date_rdv" required min="<?php echo date('Y-m-d'); ?>">
+                        </div>
+                        <div>
+                            <label>Début</label>
+                            <input type="time" name="heure_debut" required>
+                        </div>
+                        <div>
+                            <label>Fin</label>
+                            <input type="time" name="heure_fin" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" name="action_demander_rdv">
+                        <i class="fa-solid fa-paper-plane"></i> Envoyer la demande
+                    </button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3><i class="fa-solid fa-list-check"></i> Mes demandes de rendez-vous</h3>
+                <?php if(empty($mes_rdv)): ?>
+                    <p>Aucune demande de rendez-vous pour le moment.</p>
+                <?php else: ?>
+                    <table>
+                        <thead>
+                            <tr><th>Professeur</th><th>Date</th><th>Sujet</th><th>Statut</th><th>Action</th></tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach($mes_rdv as $r): ?>
+                                <tr>
+                                    <td><?php echo htmlspecialchars($r['prof_nom'] . ' ' . $r['prof_prenom']); ?></td>
+                                    <td>
+                                        <?php echo date('d/m/Y', strtotime($r['date_rdv'])); ?><br>
+                                        <small><?php echo substr($r['heure_debut'],0,5) . ' - ' . substr($r['heure_fin'],0,5); ?></small>
+                                    </td>
+                                    <td>
+                                        <strong><?php echo htmlspecialchars($r['sujet']); ?></strong>
+                                        <?php if(!empty($r['message'])): ?><br><small><?php echo htmlspecialchars($r['message']); ?></small><?php endif; ?>
+                                        <?php if(!empty($r['reponse_enseignant'])): ?><br><em>Réponse : <?php echo htmlspecialchars($r['reponse_enseignant']); ?></em><?php endif; ?>
+                                    </td>
+                                    <td><span class="badge <?php echo htmlspecialchars($r['statut']); ?>"><?php echo htmlspecialchars(str_replace('_', ' ', $r['statut'])); ?></span></td>
+                                    <td>
+                                        <?php if($r['statut'] === 'en_attente'): ?>
+                                            <form method="POST" onsubmit="return confirm('Annuler cette demande de rendez-vous ?');">
+                                                <input type="hidden" name="rdv_id" value="<?php echo intval($r['id']); ?>">
+                                                <button type="submit" name="action_annuler_rdv" style="background:#E53E3E;">Annuler</button>
+                                            </form>
+                                        <?php else: ?>
+                                            -
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 
@@ -607,6 +749,15 @@ try {
             }
         });
     }
+</script>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+$(document).ready(function() {
+    setTimeout(function() {
+        $(".alert.success, .alert.error, .alert.danger").fadeOut(800);
+    }, 4000);
+});
 </script>
 </body>
 </html>
