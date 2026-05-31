@@ -133,6 +133,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+
+    // C2. Inscription d'un étudiant à un cours
+    if (isset($_POST['inscrire_cours_etudiant'])) {
+        $active_tab = "inscriptions_cours";
+        $etudiant_id = intval($_POST['etudiant_id']);
+        $cours_id = intval($_POST['cours_id']);
+
+        if (!empty($etudiant_id) && !empty($cours_id)) {
+            try {
+                // Vérifier que l'étudiant existe et récupérer sa promotion
+                $stmtStudent = $pdo->prepare("SELECT e.promotion_id, u.nom, u.prenom 
+                                              FROM etudiants e
+                                              JOIN utilisateurs u ON u.id = e.utilisateur_id
+                                              WHERE e.utilisateur_id = ?");
+                $stmtStudent->execute([$etudiant_id]);
+                $studentInfo = $stmtStudent->fetch();
+
+                // Vérifier que le cours existe et récupérer sa promotion cible
+                $stmtCourse = $pdo->prepare("SELECT id, nom_cours, promotion_id FROM cours WHERE id = ?");
+                $stmtCourse->execute([$cours_id]);
+                $courseInfo = $stmtCourse->fetch();
+
+                if (!$studentInfo) {
+                    $msg_status = "<div class='alert error'>❌ Étudiant introuvable.</div>";
+                } elseif (!$courseInfo) {
+                    $msg_status = "<div class='alert error'>❌ Cours introuvable.</div>";
+                } elseif (!empty($courseInfo['promotion_id']) && intval($courseInfo['promotion_id']) !== intval($studentInfo['promotion_id'])) {
+                    $msg_status = "<div class='alert error'>❌ Impossible : ce cours n'est pas associé à la promotion de cet étudiant.</div>";
+                } else {
+                    $check = $pdo->prepare("SELECT COUNT(*) FROM inscriptions_cours WHERE etudiant_id = ? AND cours_id = ?");
+                    $check->execute([$etudiant_id, $cours_id]);
+
+                    if ($check->fetchColumn() > 0) {
+                        $msg_status = "<div class='alert error'>⚠️ Cet étudiant est déjà inscrit à ce cours.</div>";
+                    } else {
+                        $stmt = $pdo->prepare("INSERT INTO inscriptions_cours (etudiant_id, cours_id, date_inscription) VALUES (?, ?, CURDATE())");
+                        $stmt->execute([$etudiant_id, $cours_id]);
+                        $msg_status = "<div class='alert success'>✅ Étudiant inscrit au cours avec succès !</div>";
+                    }
+                }
+            } catch (PDOException $e) {
+                $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
+            }
+        } else {
+            $msg_status = "<div class='alert error'>❌ Veuillez sélectionner un étudiant et un cours.</div>";
+        }
+    }
+
+    // C3. Suppression d'une inscription à un cours
+    if (isset($_POST['supprimer_inscription_cours'])) {
+        $active_tab = "inscriptions_cours";
+        $etudiant_id = intval($_POST['etudiant_id']);
+        $cours_id = intval($_POST['cours_id']);
+
+        try {
+            $stmt = $pdo->prepare("DELETE FROM inscriptions_cours WHERE etudiant_id = ? AND cours_id = ?");
+            $stmt->execute([$etudiant_id, $cours_id]);
+            $msg_status = "<div class='alert success'>🗑️ Inscription au cours supprimée.</div>";
+        } catch (PDOException $e) {
+            $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
+        }
+    }
+
     // D. Inscription Enseignant
     if (isset($_POST['inscrire_enseignant'])) {
         $active_tab = "inscription_prof";
@@ -304,82 +367,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
-    // K. Validation de l'année d'un étudiant
-    if (isset($_POST['valider_annee_etudiant'])) {
-        $active_tab = "validation_annee";
-        $id_user = intval($_POST['user_id']);
 
-        try {
-            $stmt = $pdo->prepare("SELECT e.utilisateur_id, e.promotion_id, p.nom_promotion, p.annee_academique, p.majeure_id
-                                   FROM etudiants e
-                                   JOIN promotions p ON e.promotion_id = p.id
-                                   WHERE e.utilisateur_id = ?");
-            $stmt->execute([$id_user]);
-            $student_promo = $stmt->fetch();
+    // M. Inscrire un étudiant à un cours
+    if (isset($_POST['inscrire_etudiant_cours'])) {
+        $active_tab = "inscriptions_cours";
+        $etudiant_id = intval($_POST['etudiant_id']);
+        $cours_id = intval($_POST['cours_id']);
 
-            if (!$student_promo) {
-                $msg_status = "<div class='alert error'>❌ Étudiant introuvable.</div>";
-            } elseif ($student_promo['nom_promotion'] === 'ING5') {
-                $msg_status = "<div class='alert error'>⚠️ L'étudiant est déjà en ING5, il ne peut pas passer dans une année supérieure.</div>";
-            } else {
-                $ordre = ['ING1' => 'ING2', 'ING2' => 'ING3', 'ING3' => 'ING4', 'ING4' => 'ING5'];
-                $next_promo_name = $ordre[$student_promo['nom_promotion']];
+        if ($etudiant_id > 0 && $cours_id > 0) {
+            try {
+                // Vérifier que l'étudiant et le cours appartiennent à la même promotion
+                $checkPromo = $pdo->prepare("
+                    SELECT e.promotion_id AS promo_etudiant, c.promotion_id AS promo_cours
+                    FROM etudiants e
+                    JOIN cours c ON c.id = ?
+                    WHERE e.utilisateur_id = ?
+                ");
+                $checkPromo->execute([$cours_id, $etudiant_id]);
+                $promoInfo = $checkPromo->fetch();
 
-                $checkNext = $pdo->prepare("SELECT id FROM promotions WHERE nom_promotion = ? AND annee_academique = ? LIMIT 1");
-                $checkNext->execute([$next_promo_name, $student_promo['annee_academique']]);
-                $next_promo_id = $checkNext->fetchColumn();
+                if (!$promoInfo) {
+                    $msg_status = "<div class='alert error'>❌ Étudiant ou cours introuvable.</div>";
+                } elseif (!empty($promoInfo['promo_cours']) && intval($promoInfo['promo_etudiant']) !== intval($promoInfo['promo_cours'])) {
+                    $msg_status = "<div class='alert error'>❌ Cet étudiant ne peut pas être inscrit à ce cours car il n'est pas dans la même promotion.</div>";
+                } else {
+                    $check = $pdo->prepare("SELECT COUNT(*) FROM inscriptions_cours WHERE etudiant_id = ? AND cours_id = ?");
+                    $check->execute([$etudiant_id, $cours_id]);
 
-                if (!$next_promo_id) {
-                    $createPromo = $pdo->prepare("INSERT INTO promotions (nom_promotion, annee_academique, majeure_id) VALUES (?, ?, ?)");
-                    $createPromo->execute([$next_promo_name, $student_promo['annee_academique'], $student_promo['majeure_id']]);
-                    $next_promo_id = $pdo->lastInsertId();
+                    if ($check->fetchColumn() > 0) {
+                        $msg_status = "<div class='alert error'>❌ Cet étudiant est déjà inscrit à ce cours.</div>";
+                    } else {
+                        $stmt = $pdo->prepare("INSERT INTO inscriptions_cours (etudiant_id, cours_id, date_inscription) VALUES (?, ?, CURDATE())");
+                        $stmt->execute([$etudiant_id, $cours_id]);
+                        $msg_status = "<div class='alert success'>✅ Étudiant inscrit au cours avec succès !</div>";
+                    }
                 }
-
-                // On remet groupe_td_id à NULL car les groupes TD dépendent de la promotion.
-                $update = $pdo->prepare("UPDATE etudiants SET promotion_id = ?, groupe_td_id = NULL WHERE utilisateur_id = ?");
-                $update->execute([$next_promo_id, $id_user]);
-                $msg_status = "<div class='alert success'>✅ Année validée : l'étudiant passe en " . htmlspecialchars($next_promo_name) . ". Pensez à lui réattribuer un groupe TD.</div>";
+            } catch (PDOException $e) {
+                $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
             }
-        } catch (PDOException $e) {
-            $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
+        } else {
+            $msg_status = "<div class='alert error'>❌ Veuillez sélectionner un étudiant et un cours.</div>";
         }
     }
 
-    // L. Validation automatique des étudiants avec moyenne >= 10
-    if (isset($_POST['valider_annee_auto'])) {
-        $active_tab = "validation_annee";
+    // N. Supprimer une inscription à un cours
+    if (isset($_POST['supprimer_inscription_cours'])) {
+        $active_tab = "inscriptions_cours";
+        $etudiant_id = intval($_POST['etudiant_id']);
+        $cours_id = intval($_POST['cours_id']);
+
         try {
-            $studentsToValidate = $pdo->query("SELECT e.utilisateur_id, p.nom_promotion, p.annee_academique, p.majeure_id, AVG(n.note_valeur) AS moyenne
-                                                FROM etudiants e
-                                                JOIN promotions p ON e.promotion_id = p.id
-                                                JOIN notes n ON n.etudiant_id = e.utilisateur_id
-                                                WHERE p.nom_promotion != 'ING5'
-                                                GROUP BY e.utilisateur_id, p.nom_promotion, p.annee_academique, p.majeure_id
-                                                HAVING moyenne >= 10")->fetchAll();
-
-            $ordre = ['ING1' => 'ING2', 'ING2' => 'ING3', 'ING3' => 'ING4', 'ING4' => 'ING5'];
-            $nb_valides = 0;
-            $pdo->beginTransaction();
-            foreach ($studentsToValidate as $st) {
-                $next_promo_name = $ordre[$st['nom_promotion']];
-                $checkNext = $pdo->prepare("SELECT id FROM promotions WHERE nom_promotion = ? AND annee_academique = ? LIMIT 1");
-                $checkNext->execute([$next_promo_name, $st['annee_academique']]);
-                $next_promo_id = $checkNext->fetchColumn();
-
-                if (!$next_promo_id) {
-                    $createPromo = $pdo->prepare("INSERT INTO promotions (nom_promotion, annee_academique, majeure_id) VALUES (?, ?, ?)");
-                    $createPromo->execute([$next_promo_name, $st['annee_academique'], $st['majeure_id']]);
-                    $next_promo_id = $pdo->lastInsertId();
-                }
-
-                $update = $pdo->prepare("UPDATE etudiants SET promotion_id = ?, groupe_td_id = NULL WHERE utilisateur_id = ?");
-                $update->execute([$next_promo_id, $st['utilisateur_id']]);
-                $nb_valides++;
-            }
-            $pdo->commit();
-            $msg_status = "<div class='alert success'>✅ Validation automatique terminée : " . $nb_valides . " étudiant(s) passé(s) à l'année supérieure.</div>";
+            $stmt = $pdo->prepare("DELETE FROM inscriptions_cours WHERE etudiant_id = ? AND cours_id = ?");
+            $stmt->execute([$etudiant_id, $cours_id]);
+            $msg_status = "<div class='alert success'>🗑️ Inscription supprimée !</div>";
         } catch (PDOException $e) {
-            if ($pdo->inTransaction()) { $pdo->rollBack(); }
             $msg_status = "<div class='alert error'>❌ Erreur SQL : " . $e->getMessage() . "</div>";
         }
     }
@@ -388,40 +429,59 @@ try {
     $list_promotions = $pdo->query("SELECT id, nom_promotion, annee_academique FROM promotions ORDER BY nom_promotion ASC")->fetchAll();
     
     // Nouvelle requête pour récupérer les groupes avec le nombre d'inscrits
-	$list_groupes = $pdo->query("
-		SELECT 
-			g.id,
-			g.nom AS groupe_nom,
-			p.id AS promo_id,
-			p.nom_promotion,
-			a.nom AS amphi_nom,
-			(SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = g.id) AS nb_inscrits
-		FROM groupes_td g 
-		JOIN amphis a ON g.amphi_id = a.id 
-		JOIN promotions p ON a.promotion_id = p.id 
-		ORDER BY p.nom_promotion ASC, a.nom ASC, g.nom ASC
-	")->fetchAll();
+    $list_groupes = $pdo->query("
+        SELECT g.id, g.nom AS groupe_nom, p.nom_promotion, a.nom AS amphi_nom,
+               (SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = g.id) AS nb_inscrits
+        FROM groupes_td g 
+        JOIN amphis a ON g.amphi_id = a.id 
+        JOIN promotions p ON a.promotion_id = p.id 
+        ORDER BY p.nom_promotion ASC, a.nom ASC, g.nom ASC
+    ")->fetchAll();
 
     $list_ue = $pdo->query("SELECT id, nom_ue FROM unites_enseignement ORDER BY nom_ue ASC")->fetchAll();
     $list_salles = $pdo->query("SELECT id, nom_salle, type_salle FROM salles ORDER BY nom_salle ASC")->fetchAll();
     $list_cours = $pdo->query("SELECT id, nom_cours FROM cours ORDER BY nom_cours ASC")->fetchAll();
-    $list_cours_details = $pdo->query("SELECT c.id, c.nom_cours, u.nom_ue FROM cours c LEFT JOIN unites_enseignement u ON c.ue_id = u.id ORDER BY c.nom_cours ASC")->fetchAll();
+    $list_cours_details = $pdo->query("
+        SELECT c.id, c.nom_cours, c.promotion_id, u.nom_ue, p.nom_promotion
+        FROM cours c
+        LEFT JOIN unites_enseignement u ON c.ue_id = u.id
+        LEFT JOIN promotions p ON c.promotion_id = p.id
+        ORDER BY c.nom_cours ASC
+    ")->fetchAll();
 
     
     $students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.id AS promo_id, p.nom_promotion AS promo_nom, g.id AS groupe_id, g.nom AS groupe_nom, e.statut_parcours FROM utilisateurs u LEFT JOIN etudiants e ON u.id = e.utilisateur_id LEFT JOIN promotions p ON e.promotion_id = p.id LEFT JOIN groupes_td g ON e.groupe_td_id = g.id WHERE u.role = 'etudiant' ORDER BY u.nom ASC")->fetchAll();
     $teachers_list = $pdo->query("SELECT id, nom, prenom, email FROM utilisateurs WHERE role = 'enseignant' ORDER BY nom ASC")->fetchAll();
-    
-    $validation_students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.nom_promotion, p.annee_academique, g.nom AS groupe_nom,
-                                               ROUND(AVG(n.note_valeur), 2) AS moyenne,
-                                               COUNT(n.id) AS nb_notes
-                                        FROM utilisateurs u
-                                        JOIN etudiants e ON u.id = e.utilisateur_id
-                                        JOIN promotions p ON e.promotion_id = p.id
-                                        LEFT JOIN groupes_td g ON e.groupe_td_id = g.id
-                                        LEFT JOIN notes n ON n.etudiant_id = u.id
-                                        WHERE u.role = 'etudiant'
-                                        GROUP BY u.id, u.nom, u.prenom, u.email, p.nom_promotion, p.annee_academique, g.nom
-                                        ORDER BY p.nom_promotion ASC, u.nom ASC")->fetchAll();
+
+    $list_cours_inscription = $pdo->query("SELECT c.id, c.nom_cours, c.promotion_id, p.nom_promotion
+                                           FROM cours c
+                                           LEFT JOIN promotions p ON c.promotion_id = p.id
+                                           ORDER BY p.nom_promotion ASC, c.nom_cours ASC")->fetchAll();
+
+    $inscriptions_cours_admin = $pdo->query("SELECT ic.etudiant_id, ic.cours_id, ic.date_inscription,
+                                                    u.nom, u.prenom, u.email,
+                                                    c.nom_cours,
+                                                    p.nom_promotion
+                                             FROM inscriptions_cours ic
+                                             JOIN utilisateurs u ON u.id = ic.etudiant_id
+                                             JOIN cours c ON c.id = ic.cours_id
+                                             LEFT JOIN promotions p ON c.promotion_id = p.id
+                                             ORDER BY ic.date_inscription DESC, u.nom ASC, c.nom_cours ASC")->fetchAll();
+
+
+
+    $list_inscriptions_cours = $pdo->query("
+        SELECT ic.etudiant_id, ic.cours_id, ic.date_inscription,
+               u.nom, u.prenom, u.email,
+               c.nom_cours,
+               p.nom_promotion
+        FROM inscriptions_cours ic
+        JOIN utilisateurs u ON ic.etudiant_id = u.id
+        JOIN cours c ON ic.cours_id = c.id
+        LEFT JOIN etudiants e ON e.utilisateur_id = u.id
+        LEFT JOIN promotions p ON e.promotion_id = p.id
+        ORDER BY u.nom ASC, u.prenom ASC, c.nom_cours ASC
+    ")->fetchAll();
     
     $count_std = $pdo->query("SELECT COUNT(*) FROM utilisateurs WHERE role = 'etudiant'")->fetchColumn();
     $count_prf = $pdo->query("SELECT COUNT(*) FROM utilisateurs WHERE role = 'enseignant'")->fetchColumn();
@@ -533,7 +593,7 @@ try {
         <li><a id="btn-students" onclick="switchTab('students')"><i class="fa-solid fa-user-graduate"></i> Étudiants</a></li>
         <li><a id="btn-teachers" onclick="switchTab('teachers')"><i class="fa-solid fa-chalkboard-user"></i> Enseignants</a></li>
         <li><a id="btn-courses_schedule" onclick="switchTab('courses_schedule')"><i class="fa-solid fa-book-open"></i> Cours & Planning</a></li>
-        <li><a id="btn-validation_annee" onclick="switchTab('validation_annee')"><i class="fa-solid fa-circle-check"></i> Valider l'année</a></li>
+        <li><a id="btn-inscriptions_cours" onclick="switchTab('inscriptions_cours')"><i class="fa-solid fa-list-check"></i> Inscriptions aux cours</a></li>
         <li><a id="btn-inscription" onclick="switchTab('inscription')"><i class="fa-solid fa-user-plus"></i> Inscrire Étudiant</a></li>
         <li><a id="btn-inscription_prof" onclick="switchTab('inscription_prof')"><i class="fa-solid fa-chalkboard-user"></i> Inscrire Prof</a></li>
         <li><a href="deconnexion.php" style="color:#FEB2B2; margin-top:20px;"><i class="fa-solid fa-power-off"></i> Déconnexion</a></li>
@@ -808,47 +868,76 @@ try {
         </div>
     </div>
 
-    <!-- VALIDATION ANNEE -->
-    <div id="tab-validation_annee" class="tab-content">
+    <!-- INSCRIPTIONS AUX COURS -->
+    <div id="tab-inscriptions_cours" class="tab-content">
         <div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:20px;">
+            <h3><i class="fa-solid fa-list-check"></i> Inscrire un étudiant à un cours</h3>
+            <form method="POST" style="display:grid; grid-template-columns: 1fr 1fr auto; gap:15px; align-items:end;">
                 <div>
-                    <h3 style="margin:0;"><i class="fa-solid fa-circle-check"></i> Validation de l'année</h3>
-                    <p style="margin:8px 0 0 0; color:#4A5568;">L'admin peut faire passer un étudiant à l'année supérieure. La moyenne est calculée avec les notes enregistrées.</p>
+                    <label>Étudiant</label>
+                    <select name="etudiant_id" required>
+                        <option value="">-- Sélectionner un étudiant --</option>
+                        <?php foreach($students as $s): ?>
+                            <option value="<?php echo intval($s['id']); ?>">
+                                <?php echo htmlspecialchars($s['nom'] . ' ' . $s['prenom'] . ' - ' . ($s['promo_nom'] ?? 'Sans promotion')); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
-                <form method="POST" onsubmit="return confirm('Valider automatiquement tous les étudiants avec une moyenne >= 10 ?');" style="min-width:260px; margin:0;">
-                    <button type="submit" name="valider_annee_auto">Valider automatiquement moyenne ≥ 10</button>
-                </form>
-            </div>
+
+                <div>
+                    <label>Cours</label>
+                    <select name="cours_id" required>
+                        <option value="">-- Sélectionner un cours --</option>
+                        <?php foreach($list_cours_inscription as $c): ?>
+                            <option value="<?php echo intval($c['id']); ?>">
+                                <?php echo htmlspecialchars($c['nom_cours']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div>
+                    <button type="submit" name="inscrire_etudiant_cours" value="1" style="margin-bottom:15px;">Inscrire</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>Liste des inscriptions aux cours</h3>
             <table>
                 <thead>
-                    <tr><th>Étudiant</th><th>Promotion actuelle</th><th>Groupe TD</th><th>Moyenne</th><th>Décision</th></tr>
+                    <tr>
+                        <th>Étudiant</th>
+                        <th>Promotion</th>
+                        <th>Cours</th>
+                        <th>Date d'inscription</th>
+                        <th>Action</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    <?php foreach($validation_students as $vs): ?>
-                    <tr>
-                        <td><strong><?php echo htmlspecialchars($vs['nom'].' '.$vs['prenom']); ?></strong><br><small><?php echo htmlspecialchars($vs['email']); ?></small></td>
-                        <td><?php echo htmlspecialchars($vs['nom_promotion'].' - '.$vs['annee_academique']); ?></td>
-                        <td><?php echo htmlspecialchars($vs['groupe_nom'] ?? 'À attribuer'); ?></td>
-                        <td>
-                            <?php if ($vs['nb_notes'] > 0): ?>
-                                <strong><?php echo htmlspecialchars($vs['moyenne']); ?>/20</strong>
-                            <?php else: ?>
-                                <span style="color:#718096;">Aucune note</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($vs['nom_promotion'] !== 'ING5'): ?>
-                                <form method="POST" onsubmit="return confirm('Valider l’année de cet étudiant ? Il passera à l’année supérieure.');" style="display:inline;">
-                                    <input type="hidden" name="user_id" value="<?php echo $vs['id']; ?>">
-                                    <button type="submit" name="valider_annee_etudiant" class="btn-view" style="width:auto; margin:0;">Valider l'année</button>
-                                </form>
-                            <?php else: ?>
-                                <span class="badge badge-present">Cycle terminé</span>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
+                    <?php if(empty($list_inscriptions_cours)): ?>
+                        <tr><td colspan="5" style="text-align:center; color:#718096;">Aucune inscription pour le moment.</td></tr>
+                    <?php else: ?>
+                        <?php foreach($list_inscriptions_cours as $ins): ?>
+                            <tr>
+                                <td>
+                                    <strong><?php echo htmlspecialchars($ins['nom'] . ' ' . $ins['prenom']); ?></strong><br>
+                                    <small><?php echo htmlspecialchars($ins['email']); ?></small>
+                                </td>
+                                <td><?php echo htmlspecialchars($ins['nom_promotion'] ?? 'N/A'); ?></td>
+                                <td><?php echo htmlspecialchars($ins['nom_cours']); ?></td>
+                                <td><?php echo htmlspecialchars($ins['date_inscription']); ?></td>
+                                <td>
+                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer cette inscription au cours ?');">
+                                        <input type="hidden" name="etudiant_id" value="<?php echo $ins['etudiant_id']; ?>">
+                                        <input type="hidden" name="cours_id" value="<?php echo $ins['cours_id']; ?>">
+                                        <button type="submit" name="supprimer_inscription_cours" class="btn-delete"><i class="fa-solid fa-trash"></i> Supprimer</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
@@ -863,29 +952,19 @@ try {
                 <input type="text" name="prenom" required placeholder="Prénom">
                 <input type="email" name="email" required placeholder="Email">
                 <input type="password" name="password" required value="Etudiant2026!">
-                <select name="promotion_id" id="promotion_id" required onchange="filterClasses('promotion_id', 'groupe_td_id')">
-					<option value="">-- Promotion --</option>
-					<?php foreach($list_promotions as $promo): ?>
-						<option value="<?php echo $promo['id']; ?>">
-							<?php echo htmlspecialchars($promo['nom_promotion']); ?>
-						</option>
-					<?php endforeach; ?>
-				</select>
-
-				<select name="groupe_td_id" id="groupe_td_id" required>
-					<option value="">-- Classe (Obligatoire) --</option>
-					<?php foreach($list_groupes as $g): 
-						$isFull = $g['nb_inscrits'] >= 25;
-						$label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
-					?>
-						<option 
-							value="<?php echo $g['id']; ?>" 
-							data-promo="<?php echo $g['promo_id']; ?>"
-							<?php if($isFull) echo 'disabled style="color:red;"'; ?>>
-							<?php echo htmlspecialchars($label); ?>
-						</option>
-					<?php endforeach; ?>
-				</select>
+                <select name="promotion_id" required>
+                    <option value="">-- Promotion --</option>
+                    <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
+                </select>
+                <select name="groupe_td_id" required>
+                    <option value="">-- Classe (Obligatoire) --</option>
+                    <?php foreach($list_groupes as $g): 
+                        $isFull = $g['nb_inscrits'] >= 25;
+                        $label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
+                    ?>
+                        <option value="<?php echo $g['id']; ?>" <?php if($isFull) echo 'disabled style="color:red;"'; ?>><?php echo htmlspecialchars($label); ?></option>
+                    <?php endforeach; ?>
+                </select>
                 <select name="statut_parcours" required>
                     <option value="initial">Initial</option><option value="alternant">Alternant</option>
                 </select>
@@ -918,28 +997,18 @@ try {
             <input type="text" name="nom" id="edit_nom" required>
             <input type="text" name="prenom" id="edit_prenom" required>
             <input type="email" name="email" id="edit_email" required>
-            <select name="promotion_id" id="edit_promotion_id" required onchange="filterClasses('edit_promotion_id', 'edit_groupe_td_id')">
-				<?php foreach($list_promotions as $promo): ?>
-					<option value="<?php echo $promo['id']; ?>">
-						<?php echo htmlspecialchars($promo['nom_promotion']); ?>
-					</option>
-				<?php endforeach; ?>
-			</select>
-
-			<select name="groupe_td_id" id="edit_groupe_td_id" required>
-				<option value="">-- Classe (Obligatoire) --</option>
-				<?php foreach($list_groupes as $g): 
-					$isFull = $g['nb_inscrits'] >= 25;
-					$label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
-				?>
-					<option 
-						value="<?php echo $g['id']; ?>" 
-						data-promo="<?php echo $g['promo_id']; ?>"
-						<?php if($isFull) echo 'disabled style="color:red;"'; ?>>
-						<?php echo htmlspecialchars($label); ?>
-					</option>
-				<?php endforeach; ?>
-			</select>
+            <select name="promotion_id" id="edit_promotion_id" required>
+                <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
+            </select>
+            <select name="groupe_td_id" id="edit_groupe_td_id" required>
+                <option value="">-- Classe (Obligatoire) --</option>
+                <?php foreach($list_groupes as $g): 
+                    $isFull = $g['nb_inscrits'] >= 25;
+                    $label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
+                ?>
+                    <option value="<?php echo $g['id']; ?>" <?php if($isFull) echo 'disabled style="color:red;"'; ?>><?php echo htmlspecialchars($label); ?></option>
+                <?php endforeach; ?>
+            </select>
             <select name="statut_parcours" id="edit_statut_parcours" required>
                 <option value="initial">Initial</option><option value="alternant">Alternant</option>
             </select>
@@ -1152,8 +1221,7 @@ try {
         document.getElementById('edit_prenom').value = s.prenom;
         document.getElementById('edit_email').value = s.email;
         document.getElementById('edit_promotion_id').value = s.promo_id;
-		filterClasses('edit_promotion_id', 'edit_groupe_td_id');
-		document.getElementById('edit_groupe_td_id').value = s.groupe_id || "";
+        document.getElementById('edit_groupe_td_id').value = s.groupe_id || "";
         document.getElementById('edit_statut_parcours').value = s.statut_parcours;
         document.getElementById('editModal').style.display = 'block';
     }
@@ -1218,33 +1286,23 @@ try {
         });
     }
 
+
+    function filterCourseRegistrations() {
+        let input = document.getElementById("searchCourseRegistration");
+        if (!input) return;
+        let filter = input.value.toUpperCase();
+        let table = document.getElementById("courseRegistrationsTable");
+        let tr = table.getElementsByTagName("tr");
+
+        for (let i = 1; i < tr.length; i++) {
+            let rowText = tr[i].textContent || tr[i].innerText;
+            tr[i].style.display = rowText.toUpperCase().indexOf(filter) > -1 ? "" : "none";
+        }
+    }
+
     window.onclick = function(e) {
         if (e.target.className === 'modal') { closeEditModal(); closeEditTeacherModal(); closeEditSessionModal(); }
     }
-	
-	function filterClasses(promotionSelectId, groupeSelectId) {
-		const promotionSelect = document.getElementById(promotionSelectId);
-		const groupeSelect = document.getElementById(groupeSelectId);
-
-		const selectedPromo = promotionSelect.value;
-
-		groupeSelect.value = "";
-
-		Array.from(groupeSelect.options).forEach(option => {
-			if (option.value === "") {
-				option.style.display = "block";
-				return;
-			}
-
-			const optionPromo = option.getAttribute("data-promo");
-
-			if (selectedPromo === "" || optionPromo === selectedPromo) {
-				option.style.display = "block";
-			} else {
-				option.style.display = "none";
-			}
-		});
-	}
 </script>
 </body>
 </html>
