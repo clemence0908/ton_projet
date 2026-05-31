@@ -304,8 +304,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg_status = "<div class='alert error'>❌ Erreur : " . $e->getMessage() . "</div>";
         }
     }
-
-// K. Validation de l'année d'un étudiant
+    // K. Validation de l'année d'un étudiant
     if (isset($_POST['valider_annee_etudiant'])) {
         $active_tab = "validation_annee";
         $id_user = intval($_POST['user_id']);
@@ -389,14 +388,19 @@ try {
     $list_promotions = $pdo->query("SELECT id, nom_promotion, annee_academique FROM promotions ORDER BY nom_promotion ASC")->fetchAll();
     
     // Nouvelle requête pour récupérer les groupes avec le nombre d'inscrits
-    $list_groupes = $pdo->query("
-        SELECT g.id, g.nom AS groupe_nom, p.nom_promotion, a.nom AS amphi_nom,
-               (SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = g.id) AS nb_inscrits
-        FROM groupes_td g 
-        JOIN amphis a ON g.amphi_id = a.id 
-        JOIN promotions p ON a.promotion_id = p.id 
-        ORDER BY p.nom_promotion ASC, a.nom ASC, g.nom ASC
-    ")->fetchAll();
+	$list_groupes = $pdo->query("
+		SELECT 
+			g.id,
+			g.nom AS groupe_nom,
+			p.id AS promo_id,
+			p.nom_promotion,
+			a.nom AS amphi_nom,
+			(SELECT COUNT(*) FROM etudiants WHERE groupe_td_id = g.id) AS nb_inscrits
+		FROM groupes_td g 
+		JOIN amphis a ON g.amphi_id = a.id 
+		JOIN promotions p ON a.promotion_id = p.id 
+		ORDER BY p.nom_promotion ASC, a.nom ASC, g.nom ASC
+	")->fetchAll();
 
     $list_ue = $pdo->query("SELECT id, nom_ue FROM unites_enseignement ORDER BY nom_ue ASC")->fetchAll();
     $list_salles = $pdo->query("SELECT id, nom_salle, type_salle FROM salles ORDER BY nom_salle ASC")->fetchAll();
@@ -406,7 +410,7 @@ try {
     
     $students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.id AS promo_id, p.nom_promotion AS promo_nom, g.id AS groupe_id, g.nom AS groupe_nom, e.statut_parcours FROM utilisateurs u LEFT JOIN etudiants e ON u.id = e.utilisateur_id LEFT JOIN promotions p ON e.promotion_id = p.id LEFT JOIN groupes_td g ON e.groupe_td_id = g.id WHERE u.role = 'etudiant' ORDER BY u.nom ASC")->fetchAll();
     $teachers_list = $pdo->query("SELECT id, nom, prenom, email FROM utilisateurs WHERE role = 'enseignant' ORDER BY nom ASC")->fetchAll();
-
+    
     $validation_students = $pdo->query("SELECT u.id, u.nom, u.prenom, u.email, p.nom_promotion, p.annee_academique, g.nom AS groupe_nom,
                                                ROUND(AVG(n.note_valeur), 2) AS moyenne,
                                                COUNT(n.id) AS nb_notes
@@ -803,7 +807,7 @@ try {
             </table>
         </div>
     </div>
-    
+
     <!-- VALIDATION ANNEE -->
     <div id="tab-validation_annee" class="tab-content">
         <div class="card">
@@ -859,19 +863,29 @@ try {
                 <input type="text" name="prenom" required placeholder="Prénom">
                 <input type="email" name="email" required placeholder="Email">
                 <input type="password" name="password" required value="Etudiant2026!">
-                <select name="promotion_id" required>
-                    <option value="">-- Promotion --</option>
-                    <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
-                </select>
-                <select name="groupe_td_id" required>
-                    <option value="">-- Classe (Obligatoire) --</option>
-                    <?php foreach($list_groupes as $g): 
-                        $isFull = $g['nb_inscrits'] >= 25;
-                        $label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
-                    ?>
-                        <option value="<?php echo $g['id']; ?>" <?php if($isFull) echo 'disabled style="color:red;"'; ?>><?php echo htmlspecialchars($label); ?></option>
-                    <?php endforeach; ?>
-                </select>
+                <select name="promotion_id" id="promotion_id" required onchange="filterClasses('promotion_id', 'groupe_td_id')">
+					<option value="">-- Promotion --</option>
+					<?php foreach($list_promotions as $promo): ?>
+						<option value="<?php echo $promo['id']; ?>">
+							<?php echo htmlspecialchars($promo['nom_promotion']); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+
+				<select name="groupe_td_id" id="groupe_td_id" required>
+					<option value="">-- Classe (Obligatoire) --</option>
+					<?php foreach($list_groupes as $g): 
+						$isFull = $g['nb_inscrits'] >= 25;
+						$label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
+					?>
+						<option 
+							value="<?php echo $g['id']; ?>" 
+							data-promo="<?php echo $g['promo_id']; ?>"
+							<?php if($isFull) echo 'disabled style="color:red;"'; ?>>
+							<?php echo htmlspecialchars($label); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
                 <select name="statut_parcours" required>
                     <option value="initial">Initial</option><option value="alternant">Alternant</option>
                 </select>
@@ -904,18 +918,28 @@ try {
             <input type="text" name="nom" id="edit_nom" required>
             <input type="text" name="prenom" id="edit_prenom" required>
             <input type="email" name="email" id="edit_email" required>
-            <select name="promotion_id" id="edit_promotion_id" required>
-                <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
-            </select>
-            <select name="groupe_td_id" id="edit_groupe_td_id" required>
-                <option value="">-- Classe (Obligatoire) --</option>
-                <?php foreach($list_groupes as $g): 
-                    $isFull = $g['nb_inscrits'] >= 25;
-                    $label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
-                ?>
-                    <option value="<?php echo $g['id']; ?>" <?php if($isFull) echo 'disabled style="color:red;"'; ?>><?php echo htmlspecialchars($label); ?></option>
-                <?php endforeach; ?>
-            </select>
+            <select name="promotion_id" id="edit_promotion_id" required onchange="filterClasses('edit_promotion_id', 'edit_groupe_td_id')">
+				<?php foreach($list_promotions as $promo): ?>
+					<option value="<?php echo $promo['id']; ?>">
+						<?php echo htmlspecialchars($promo['nom_promotion']); ?>
+					</option>
+				<?php endforeach; ?>
+			</select>
+
+			<select name="groupe_td_id" id="edit_groupe_td_id" required>
+				<option value="">-- Classe (Obligatoire) --</option>
+				<?php foreach($list_groupes as $g): 
+					$isFull = $g['nb_inscrits'] >= 25;
+					$label = $g['nom_promotion'] . ' - ' . $g['amphi_nom'] . ' - ' . $g['groupe_nom'] . ' (' . $g['nb_inscrits'] . '/25 places)';
+				?>
+					<option 
+						value="<?php echo $g['id']; ?>" 
+						data-promo="<?php echo $g['promo_id']; ?>"
+						<?php if($isFull) echo 'disabled style="color:red;"'; ?>>
+						<?php echo htmlspecialchars($label); ?>
+					</option>
+				<?php endforeach; ?>
+			</select>
             <select name="statut_parcours" id="edit_statut_parcours" required>
                 <option value="initial">Initial</option><option value="alternant">Alternant</option>
             </select>
@@ -1128,7 +1152,8 @@ try {
         document.getElementById('edit_prenom').value = s.prenom;
         document.getElementById('edit_email').value = s.email;
         document.getElementById('edit_promotion_id').value = s.promo_id;
-        document.getElementById('edit_groupe_td_id').value = s.groupe_id || "";
+		filterClasses('edit_promotion_id', 'edit_groupe_td_id');
+		document.getElementById('edit_groupe_td_id').value = s.groupe_id || "";
         document.getElementById('edit_statut_parcours').value = s.statut_parcours;
         document.getElementById('editModal').style.display = 'block';
     }
@@ -1196,6 +1221,30 @@ try {
     window.onclick = function(e) {
         if (e.target.className === 'modal') { closeEditModal(); closeEditTeacherModal(); closeEditSessionModal(); }
     }
+	
+	function filterClasses(promotionSelectId, groupeSelectId) {
+		const promotionSelect = document.getElementById(promotionSelectId);
+		const groupeSelect = document.getElementById(groupeSelectId);
+
+		const selectedPromo = promotionSelect.value;
+
+		groupeSelect.value = "";
+
+		Array.from(groupeSelect.options).forEach(option => {
+			if (option.value === "") {
+				option.style.display = "block";
+				return;
+			}
+
+			const optionPromo = option.getAttribute("data-promo");
+
+			if (selectedPromo === "" || optionPromo === selectedPromo) {
+				option.style.display = "block";
+			} else {
+				option.style.display = "none";
+			}
+		});
+	}
 </script>
 </body>
 </html>
