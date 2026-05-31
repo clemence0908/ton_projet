@@ -522,6 +522,7 @@ try {
     <meta charset="UTF-8">
     <title>SmartCampus - Admin</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         :root { --bleu-ecole: #0A2240; --rouge-ecole: #D9383A; --gris-fond: #F7FAFC; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--gris-fond); margin: 0; display: flex; }
@@ -579,6 +580,17 @@ try {
         .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: bold; }
         .badge-present { background: #C6F6D5; color: #22543D; }
         .badge-absent { background: #FED7D7; color: #742A2A; }
+
+        /* Bootstrap ajouté pour améliorer l'interface admin sans supprimer l'ancien CSS */
+        .main-content .btn { width: auto; margin-bottom: 0; border-radius: 6px; }
+        .main-content .form-control, .main-content .form-select { margin-bottom: 15px; }
+        .main-content .table { background: white; border-radius: 8px; overflow: hidden; }
+        .main-content .table th { vertical-align: middle; }
+        .bootstrap-info-admin { border-left: 5px solid #0d6efd; }
+        .stat-bootstrap-card { min-height: 120px; display:flex; align-items:center; justify-content:center; }
+        .stat-bootstrap-card h3 { font-size: 2rem; margin: 0; }
+        .admin-section-title { display:flex; align-items:center; gap:8px; margin-bottom:18px; }
+
     </style>
 </head>
 <body>
@@ -598,7 +610,7 @@ try {
 </div>
 
 <div class="main-content">
-    <div class="header-panel">
+    <div class="header-panel bg-white rounded shadow-sm p-3">
         <h2>Panel Administration</h2>
         <span>Bonjour, <strong><?php echo htmlspecialchars($_SESSION['user_nom']); ?></strong></span>
     </div>
@@ -608,9 +620,9 @@ try {
     <!-- DASHBOARD -->
     <div id="tab-dashboard" class="tab-content" style="display: block;">
         <div class="grid-stats">
-            <div class="stat-box stat-std"><h3><?php echo $count_std; ?></h3><p>Étudiants</p></div>
-            <div class="stat-box stat-prf"><h3><?php echo $count_prf; ?></h3><p>Enseignants</p></div>
-            <div class="stat-box stat-crs"><h3><?php echo $count_crs; ?></h3><p>Cours</p></div>
+            <div class="stat-box stat-std stat-bootstrap-card shadow-sm"><div><h3><?php echo $count_std; ?></h3><p class="mb-0">Étudiants</p></div></div>
+            <div class="stat-box stat-prf stat-bootstrap-card shadow-sm"><div><h3><?php echo $count_prf; ?></h3><p class="mb-0">Enseignants</p></div></div>
+            <div class="stat-box stat-crs stat-bootstrap-card shadow-sm"><div><h3><?php echo $count_crs; ?></h3><p class="mb-0">Cours</p></div></div>
         </div>
         <div class="card">
             <h3>Bienvenue dans votre espace de gestion</h3>
@@ -624,8 +636,8 @@ try {
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
                 <h3 style="margin:0;">Liste des Étudiants</h3>
                 <div class="search-container" style="margin:0; width:60%;">
-                    <input type="text" id="searchStudent" placeholder="🔍 Rechercher un nom ou prénom..." onkeyup="filterUsers('student')">
-                    <select id="filterPromo" onchange="filterUsers('student')">
+                    <input type="text" id="searchStudent" class="form-control" placeholder="🔍 Rechercher un nom ou prénom..." onkeyup="filterUsers('student')">
+                    <select id="filterPromo" class="form-select" onchange="filterUsers('student')">
                         <option value="">Toutes les promotions</option>
                         <?php foreach($list_promotions as $p): ?>
                             <option value="<?php echo htmlspecialchars($p['nom_promotion']); ?>"><?php echo htmlspecialchars($p['nom_promotion']); ?></option>
@@ -633,7 +645,7 @@ try {
                     </select>
                 </div>
             </div>
-            <table id="tableStudents">
+            <table id="tableStudents" class="table table-striped table-hover align-middle">
                 <thead><tr><th>Nom & Prénom</th><th>Promotion</th><th>Public</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php foreach($students as $s): ?>
@@ -642,11 +654,11 @@ try {
                         <td><?php echo $s['promo_nom']; ?></td>
                         <td><?php echo $s['groupe_nom'] ?? 'N/A'; ?></td>
                         <td>
-                            <button class="btn-view" onclick="viewUserProfile(<?php echo $s['id']; ?>)" title="Voir la fiche détaillée"><i class="fa-solid fa-file-invoice"></i> Fiche</button>
-                            <button class="btn-edit" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($s)); ?>)"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn btn-primary btn-sm btn-view" onclick="viewUserProfile(<?php echo $s['id']; ?>)" title="Voir la fiche détaillée"><i class="fa-solid fa-file-invoice"></i> Fiche</button>
+                            <button class="btn btn-secondary btn-sm btn-edit" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($s)); ?>)"><i class="fa-solid fa-pen"></i></button>
                             <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer ?');">
                                 <input type="hidden" name="user_id" value="<?php echo $s['id']; ?>">
-                                <button type="submit" name="supprimer_etudiant" class="btn-delete"><i class="fa-solid fa-trash"></i></button>
+                                <button type="submit" name="supprimer_etudiant" class="btn btn-danger btn-sm btn-delete"><i class="fa-solid fa-trash"></i></button>
                             </form>
                         </td>
                     </tr>
@@ -665,7 +677,7 @@ try {
                     <input type="text" id="searchTeacher" placeholder="🔍 Rechercher un nom..." onkeyup="filterUsers('teacher')">
                 </div>
             </div>
-            <table id="tableTeachers">
+            <table id="tableTeachers" class="table table-striped table-hover align-middle">
                 <thead><tr><th>Nom & Prénom</th><th>Email</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php foreach($teachers_list as $t): ?>
@@ -673,11 +685,11 @@ try {
                         <td><strong><?php echo htmlspecialchars($t['nom'].' '.$t['prenom']); ?></strong></td>
                         <td><?php echo $t['email']; ?></td>
                         <td>
-                            <button class="btn-view" onclick="viewUserProfile(<?php echo $t['id']; ?>)" title="Voir la fiche détaillée"><i class="fa-solid fa-file-invoice"></i> Fiche</button>
-                            <button class="btn-edit" onclick="openEditTeacherModal(<?php echo htmlspecialchars(json_encode($t)); ?>)"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn btn-primary btn-sm btn-view" onclick="viewUserProfile(<?php echo $t['id']; ?>)" title="Voir la fiche détaillée"><i class="fa-solid fa-file-invoice"></i> Fiche</button>
+                            <button class="btn btn-secondary btn-sm btn-edit" onclick="openEditTeacherModal(<?php echo htmlspecialchars(json_encode($t)); ?>)"><i class="fa-solid fa-pen"></i></button>
                             <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer ?');">
                                 <input type="hidden" name="user_id" value="<?php echo $t['id']; ?>">
-                                <button type="submit" name="supprimer_enseignant" class="btn-delete"><i class="fa-solid fa-trash"></i></button>
+                                <button type="submit" name="supprimer_enseignant" class="btn btn-danger btn-sm btn-delete"><i class="fa-solid fa-trash"></i></button>
                             </form>
                         </td>
                     </tr>
@@ -707,13 +719,13 @@ try {
                                 <option value="<?php echo $ue['id']; ?>"><?php echo htmlspecialchars($ue['nom_ue']); ?></option>
                             <?php endforeach; ?>
                         </select>
-                        <button type="submit" name="creer_cours">Créer</button>
+                        <button type="submit" name="creer_cours" class="btn btn-success">Créer</button>
                     </form>
                 </div>
                 <div class="card">
                     <h4>Planifier une Séance</h4>
                     <form method="POST">
-                        <select name="cours_id" required>
+                        <select name="cours_id" class="form-select" required>
                             <option value="">-- Matière --</option>
                             <?php foreach($list_cours as $c): ?><option value="<?php echo $c['id']; ?>"><?php echo htmlspecialchars($c['nom_cours']); ?></option><?php endforeach; ?>
                         </select>
@@ -734,7 +746,7 @@ try {
                             <input type="time" name="heure_debut" required>
                             <input type="time" name="heure_fin" required>
                         </div>
-                        <button type="submit" name="planifier_session">Placer</button>
+                        <button type="submit" name="planifier_session" class="btn btn-primary">Placer</button>
                     </form>
                 </div>
             </div>
@@ -744,11 +756,11 @@ try {
                     
                     <!-- NAVIGATION SEMAINES -->
                     <div style="display:flex; align-items:center; gap:15px; background:#EDF2F7; padding:5px 15px; border-radius:6px;">
-                        <a href="?week=<?php echo $week_offset - 1; ?>" class="btn-nav-week" title="Semaine précédente" style="color:var(--bleu-ecole); text-decoration:none;"><i class="fa-solid fa-chevron-left"></i></a>
+                        <a href="?week=<?php echo $week_offset - 1; ?>" class="btn btn-outline-primary btn-sm btn-nav-week" title="Semaine précédente" style="color:var(--bleu-ecole); text-decoration:none;"><i class="fa-solid fa-chevron-left"></i></a>
                         <span style="font-weight:bold; font-size:0.9em; min-width:180px; text-align:center;">
                             Semaine du <?php echo $monday->format('d/m'); ?> au <?php echo (clone $monday)->modify('+4 days')->format('d/m'); ?>
                         </span>
-                        <a href="?week=<?php echo $week_offset + 1; ?>" class="btn-nav-week" title="Semaine suivante" style="color:var(--bleu-ecole); text-decoration:none;"><i class="fa-solid fa-chevron-right"></i></a>
+                        <a href="?week=<?php echo $week_offset + 1; ?>" class="btn btn-outline-primary btn-sm btn-nav-week" title="Semaine suivante" style="color:var(--bleu-ecole); text-decoration:none;"><i class="fa-solid fa-chevron-right"></i></a>
                     </div>
 
                     <?php 
@@ -824,8 +836,8 @@ try {
 
         <div class="card" style="margin-top: 25px;">
             <h3><i class="fa-solid fa-list"></i> Liste de Toutes les Séances</h3>
-            <input type="text" id="searchSessionInput" placeholder="🔍 Rechercher une séance (Date, Matière, Public, Professeur, Salle)..." onkeyup="filterSessions()" style="padding: 12px; width: 100%; box-sizing: border-box; font-size: 1em; border: 2px solid #E2E8F0; border-radius: 6px; margin-bottom: 15px;">
-            <table id="sessionsTable">
+            <input type="text" id="searchSessionInput" class="form-control" placeholder="🔍 Rechercher une séance (Date, Matière, Public, Professeur, Salle)..." onkeyup="filterSessions()" style="padding: 12px; width: 100%; box-sizing: border-box; font-size: 1em; border: 2px solid #E2E8F0; border-radius: 6px; margin-bottom: 15px;">
+            <table id="sessionsTable" class="table table-striped table-hover align-middle">
                 <thead>
                     <tr><th>Date & Horaires</th><th>Matière</th><th>Public</th><th>Enseignant</th><th>Salle</th><th>Actions</th></tr>
                 </thead>
@@ -841,7 +853,7 @@ try {
                         <td>M. <?php echo htmlspecialchars($sess['prof_nom'].' '.$sess['prof_prenom']); ?></td>
                         <td><span style="background:#E2E8F0; padding:4px 8px; border-radius:4px; font-size: 0.9em;"><?php echo htmlspecialchars($sess['nom_salle']); ?></span></td>
                         <td style="width: 100px;">
-                            <button class="btn-edit" 
+                            <button class="btn btn-secondary btn-sm btn-edit" 
                                     data-json="<?php echo htmlspecialchars(json_encode($sess), ENT_QUOTES, 'UTF-8'); ?>"
                                     onclick="openEditSessionModal(JSON.parse(this.getAttribute('data-json')))">
                                 <i class="fa-solid fa-pen-to-square"></i> Gérer
@@ -861,7 +873,7 @@ try {
             <form method="POST" style="display:grid; grid-template-columns: 1fr 1fr auto; gap:15px; align-items:end;">
                 <div>
                     <label>Étudiant</label>
-                    <select name="etudiant_id" required>
+                    <select name="etudiant_id" class="form-select" required>
                         <option value="">-- Sélectionner un étudiant --</option>
                         <?php foreach($students as $s): ?>
                             <option value="<?php echo intval($s['id']); ?>">
@@ -873,7 +885,7 @@ try {
 
                 <div>
                     <label>Cours</label>
-                    <select name="cours_id" required>
+                    <select name="cours_id" class="form-select" required>
                         <option value="">-- Sélectionner un cours --</option>
                         <?php foreach($list_cours_inscription as $c): ?>
                             <option value="<?php echo intval($c['id']); ?>">
@@ -884,14 +896,14 @@ try {
                 </div>
 
                 <div>
-                    <button type="submit" name="inscrire_etudiant_cours" value="1" style="margin-bottom:15px;">Inscrire</button>
+                    <button type="submit" name="inscrire_etudiant_cours" value="1" class="btn btn-success" style="margin-bottom:15px;">Inscrire</button>
                 </div>
             </form>
         </div>
 
         <div class="card">
             <h3>Liste des inscriptions aux cours</h3>
-            <table>
+            <table class="table table-striped table-hover align-middle">
                 <thead>
                     <tr>
                         <th>Étudiant</th>
@@ -918,7 +930,7 @@ try {
                                     <form method="POST" style="display:inline;" onsubmit="return confirm('Supprimer cette inscription au cours ?');">
                                         <input type="hidden" name="etudiant_id" value="<?php echo $ins['etudiant_id']; ?>">
                                         <input type="hidden" name="cours_id" value="<?php echo $ins['cours_id']; ?>">
-                                        <button type="submit" name="supprimer_inscription_cours" class="btn-delete"><i class="fa-solid fa-trash"></i> Supprimer</button>
+                                        <button type="submit" name="supprimer_inscription_cours" class="btn btn-danger btn-sm btn-delete"><i class="fa-solid fa-trash"></i> Supprimer</button>
                                     </form>
                                 </td>
                             </tr>
@@ -934,10 +946,10 @@ try {
         <div class="card" style="max-width: 500px; margin: auto;">
             <h3>Inscrire un Étudiant</h3>
             <form method="POST">
-                <input type="text" name="nom" required placeholder="Nom">
-                <input type="text" name="prenom" required placeholder="Prénom">
-                <input type="email" name="email" required placeholder="Email">
-                <input type="password" name="password" required value="Etudiant2026!">
+                <input type="text" name="nom" class="form-control" required placeholder="Nom">
+                <input type="text" name="prenom" class="form-control" required placeholder="Prénom">
+                <input type="email" name="email" class="form-control" required placeholder="Email">
+                <input type="password" name="password" class="form-control" required value="Etudiant2026!">
                 <select name="promotion_id" required>
                     <option value="">-- Promotion --</option>
                     <?php foreach($list_promotions as $promo): ?><option value="<?php echo $promo['id']; ?>"><?php echo $promo['nom_promotion']; ?></option><?php endforeach; ?>
@@ -954,7 +966,7 @@ try {
                 <select name="statut_parcours" required>
                     <option value="initial">Initial</option><option value="alternant">Alternant</option>
                 </select>
-                <button type="submit" name="inscrire_etudiant">Valider</button>
+                <button type="submit" name="inscrire_etudiant" class="btn btn-success">Valider</button>
             </form>
         </div>
     </div>
@@ -964,11 +976,11 @@ try {
         <div class="card" style="max-width: 500px; margin: auto;">
             <h3>Inscrire un Enseignant</h3>
             <form method="POST">
-                <input type="text" name="nom" required placeholder="Nom">
-                <input type="text" name="prenom" required placeholder="Prénom">
-                <input type="email" name="email" required placeholder="Email">
-                <input type="password" name="password" required value="Enseignant2026!">
-                <button type="submit" name="inscrire_enseignant">Valider</button>
+                <input type="text" name="nom" class="form-control" required placeholder="Nom">
+                <input type="text" name="prenom" class="form-control" required placeholder="Prénom">
+                <input type="email" name="email" class="form-control" required placeholder="Email">
+                <input type="password" name="password" class="form-control" required value="Enseignant2026!">
+                <button type="submit" name="inscrire_enseignant" class="btn btn-success">Valider</button>
             </form>
         </div>
     </div>
@@ -998,7 +1010,7 @@ try {
             <select name="statut_parcours" id="edit_statut_parcours" required>
                 <option value="initial">Initial</option><option value="alternant">Alternant</option>
             </select>
-            <button type="submit" name="modifier_etudiant">Enregistrer</button>
+            <button type="submit" name="modifier_etudiant" class="btn btn-primary">Enregistrer</button>
         </form>
     </div>
 </div>
@@ -1012,7 +1024,7 @@ try {
             <input type="text" name="nom" id="edit_prof_nom" required>
             <input type="text" name="prenom" id="edit_prof_prenom" required>
             <input type="email" name="email" id="edit_prof_email" required>
-            <button type="submit" name="modifier_enseignant">Enregistrer</button>
+            <button type="submit" name="modifier_enseignant" class="btn btn-primary">Enregistrer</button>
         </form>
     </div>
 </div>
@@ -1051,7 +1063,7 @@ try {
             
             <div style="display:flex; justify-content:space-between; margin-top:15px;">
                 <button type="submit" name="modifier_session" style="width:48%;">Mettre à jour</button>
-                <button type="submit" name="supprimer_session" class="btn-delete" style="width:48%; margin:0;" onclick="return confirm('Supprimer cette séance ?');" formnovalidate>Supprimer</button>
+                <button type="submit" name="supprimer_session" class="btn btn-danger btn-sm btn-delete" style="width:48%; margin:0;" onclick="return confirm('Supprimer cette séance ?');" formnovalidate>Supprimer</button>
             </div>
         </form>
     </div>
@@ -1290,5 +1302,23 @@ try {
         if (e.target.className === 'modal') { closeEditModal(); closeEditTeacherModal(); closeEditSessionModal(); }
     }
 </script>
+
+
+<!-- jQuery : petites interactions visuelles sans changer les fonctionnalités -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+$(document).ready(function() {
+    // Les messages de succès peuvent disparaître automatiquement après quelques secondes.
+    $('.alert.success, .alert-success').delay(3500).fadeOut(600);
+
+    // Petit effet visuel sur les lignes de tableaux.
+    $('table tbody tr').hover(
+        function() { $(this).addClass('table-active'); },
+        function() { $(this).removeClass('table-active'); }
+    );
+});
+</script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
